@@ -1,59 +1,31 @@
-# Welcome to MeerK40t!
-MeerK40t (pronounced MeerKat) is a built-from-the-ground-up MIT licensed open-source laser cutting software.
+# LDGRBL
 
-The primary goals of this software is simple:
+**LDGRBL** is a modified build and fork based on [MeerK40t](https://github.com/meerk40t/meerk40t) (v0.9.8100), focused on optimizations, driver tweaks, and seamless integration for **GRBL-based** laser engravers and CNC machines (such as Acmer, Atomstack, Creality, Ortur, Longer, and others).
 
+---
 
-* Provide users with high quality laser control software.
-* Provide developers with a highly extensible platform to help further their own ideas, and provide novel work to the laser community at large.
+## 🚀 Key Features
 
-## Getting started
-To get up and running, simply download Meerk40t from [here](https://github.com/meerk40t/meerk40t/releases) for your specific platform. (Windows, Mac OSX, Linux, and by extension, Raspberry Pi).
+* **Built on MeerK40t 0.9 Core:** Leverages a lightweight, robust, and open-source Python architecture.
+* **Optimized for GRBL:** Enhanced workflow, state management, alarm handling, and specific command protocols for GRBL controllers.
+* **Highly Extensible Interface:** Modular AUI-based GUI built with `wxPython`, allowing customizable layouts, panes, and tools.
+* **Advanced CLI & Console:** Powerful internal console system for process automation and scriptable control via terminal.
 
-## 🛠 Project Status: Maintenance Mode
-**MeerK40t is currently in a low-maintenance phase.** The original maintainers have limited bandwidth for active development. What this means for users and contributors:
-* **Response Times:** Issues and Pull Requests may not receive immediate feedback. Silence is not a lack of interest, but a lack of time.
-* **Weekly Builds:** These are automated experimental snapshots. They **will** contain bugs and regressions. If you require a stable experience, please stick to the [latest stable Release](https://github.com/meerk40t/meerk40t/releases).
-* **Contributions Welcome:** This project survives on community involvement. If you find a bug in a weekly build, the fastest way to get it fixed is to submit a Pull Request. 
-* **Support:** Please use the [Discussions] tab or community forums for general help, as the Issue tracker is reserved for actionable bug reports and development tasks.
+---
 
-<details>
-<summary>Release Versions (Just use the latest)</summary>
+## 🛠 Supported Devices
 
+* **GRBL Controllers** (Acmer S1, Atomstack, Creality, Longer, Ortur, generic Arduino/ESP32 GRBL boards)
+* **Lihuiyu M2/M3-Nano** (K40 Lasers) *(Inherited core support)*
+* **Ezcad2-compatible JCZ controllers** (Galvo Lasers) *(Inherited core support)*
 
-> * 0.9 - Active - New features and some underlying architectural changes. Try the latest released version: [0.9.9000](https://github.com/meerk40t/meerk40t/releases/tag/0.9.9000) (Jan 17, 2026) or try a prerelease even: [release list](https://github.com/meerk40t/meerk40t/releases)
-> * 0.8 - Maintenance - may receive critical bugfixes but no more new features, latest version: [0.8.12](https://github.com/meerk40t/meerk40t/releases/tag/0.8.12000) (Oct 17, 2023)
-> * 0.7 - Discontinued - K40 support only (including ruidacontrol emulator for 3rd party lasersoftware integration), latest version [0.7.10](https://github.com/meerk40t/meerk40t/releases/tag/0.7.10000) (June 13, 2023)
-> * 0.6 - Discontinued - K40 support only, latest version: [0.6.24](https://github.com/meerk40t/meerk40t/releases/tag/0.6.24) (Oct 11, 2021)
+---
 
+## 💻 Installation & Running from Source
 
-</details>
+Ensure you have **Python 3.8+** installed on your system (Linux, macOS, or Windows).
 
-### Command Line Interface
-
-Meerk40t has an advanced internal console system allowing access to most parts of the code with various commands. It also provides a command line interface which should allow you to automate any processes. To learn more, download a version of Meerk40t for your platform, and execute it in a terminal with the ``--help`` argument to get a list of options.
-
-## Compiling from source
-
-Alternatively you can run MeerK40t directly from Python. `pip install meerk40t[all]` with python installed will usually be sufficient. Then merely run `meerk40t` at the command line.
-
-See [Install: Source wiki page](https://github.com/meerk40t/meerk40t/wiki/Install:-Source)
-
-The wxMeerK40t is the GUI and is written in wxPython. We use AUI to allow to have a very highly configurable UI. We can easily add panes and tools and there are quite a few available already.
-
-## Screenshots
-![grafik](https://github.com/user-attachments/assets/e56135a2-7b1f-44be-9761-b92931e300f6)
-
-## Drivers
-
-Meerk40t provides a variety of drivers with an extensible framework to provide support for other new laser devices. The code was written with the myriad of possibilities for different software in mind. For example, it may be essential that GRBL be able to reset an alarm or notify the user of particular error codes. The configuration for GRBL is not the same for the configuration of other laser control drivers. With this in mind, MeerK40t can radically change how and when it works
-
-
-### Supported devices
-*   Lihuiyu M2/M3-Nano (aka K40 lasers)
-*   Any GRBL device (Atomstack, Creality, Longer, Ortur etc...)
-*   Ezcad2-compatible JCZ controllers galvo lasers
-*   Moshiboard
-*   NewlyDraw System 8.1 Lasers
-*   Devices with Ruida-controller
-*   Ruida-Emulation (Middleman between Lightburn and K40)
+### 1. Clone the repository
+```bash
+git clone [https://github.com/pabloguillermo/LDGRBL.git](https://github.com/pabloguillermo/LDGRBL.git)
+cd LDGRBL
