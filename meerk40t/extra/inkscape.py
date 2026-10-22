@@ -450,7 +450,7 @@ def plugin(kernel, lifecycle):
             if conversion_preference == 1:
                 # Ask
                 msg = _(
-                    "This file contains certain features that might not be fully supported by MeerK40t"
+                    "This file contains certain features that might not be fully supported by LDGRBL"
                 )
                 for feat, entry in features.items():
                     if entry[0]:

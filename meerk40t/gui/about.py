@@ -3,7 +3,7 @@ from platform import system
 
 import wx
 
-from ..main import APPLICATION_NAME, APPLICATION_VERSION
+from ..main import APPLICATION_DISPLAY_NAME, APPLICATION_VERSION
 from .icons import icon_about, icon_meerk40t
 from .mwindow import MWindow
 from .wxutils import (
@@ -19,7 +19,7 @@ from .wxutils import (
 _ = wx.GetTranslation
 
 HEADER_TEXT = (
-    "MeerK40t is a free MIT Licensed open source project\n"
+    "LDGRBL is a free MIT Licensed open source project\n"
     + "for lasering on K40 Devices.\n\n"
     + "Participation in the project is highly encouraged.\n"
     + "Past participation, and continuing participation is graciously thanked.\n"
@@ -30,7 +30,7 @@ HEADER_TEXT = (
 HEADER_TEXT_2 = "Since early 2024 jpirnay has taken on the role of lead developer\ntrying to fill in some awfully large shoes."
 
 EULOGY_TEXT = (
-    "MeerK40t is the result of an incredible piece of work by David Olsen aka Tatarize.\n"
+    "LDGRBL is the result of an incredible piece of work by David Olsen aka Tatarize.\n"
     + "He created this program over 4 years allowing users across the world to get the best out of their K40 equipment (and additional lasertypes).\n\n"
     + "Despite having no risk factors for getting cancer, he developed a tumor on his tongue that metastasized into his lungs before the doctors could stop it and passed away on July 26, 2024.\n"
     + "He was a mentor, an inspiration and a friend - David you will be missed but you won't be forgotten.\n\n"
@@ -62,7 +62,7 @@ class AboutPanel(wx.Panel):
 
     def __set_properties(self):
         self.bitmap_button_1.SetSize(self.bitmap_button_1.GetBestSize())
-        self.meerk40t_about_version_text = wxStaticText(self, wx.ID_ANY, "MeerK40t")
+        self.meerk40t_about_version_text = wxStaticText(self, wx.ID_ANY, "LDGRBL")
         # end wxGlade
 
     def __do_layout(self):
@@ -140,7 +140,7 @@ class AboutPanel(wx.Panel):
                 "* Beta testers and anyone who reported issues that helped us improve things.\n"
             )
             + _(
-                "* Translators who helped internationalise MeerK40t for worldwide use.\n"
+                "* Translators who helped internationalise LDGRBL for worldwide use.\n"
             )
             + _(
                 "* Users who have added to or edited the Wiki documentation to help other users.\n"
@@ -1609,7 +1609,7 @@ class InformationPanel(ScrolledPanel):
             info += "Ip-Address: localhost"
         self.os_version.SetValue(info)
 
-        info = f"{APPLICATION_NAME} v{APPLICATION_VERSION}"
+        info = f"{APPLICATION_DISPLAY_NAME} v{APPLICATION_VERSION}"
         self.mk_version.SetValue(info)
         info = os.path.dirname(self.context.elements.op_data._config_file)
         # info = self.context.kernel.current_directory
@@ -1618,7 +1618,7 @@ class InformationPanel(ScrolledPanel):
     def __do_layout(self):
         sizer_main = wx.BoxSizer(wx.VERTICAL)
 
-        sizer_mk = StaticBoxSizer(self, wx.ID_ANY, "MeerK40t", wx.HORIZONTAL)
+        sizer_mk = StaticBoxSizer(self, wx.ID_ANY, "LDGRBL", wx.HORIZONTAL)
         sizer_mk.Add(self.mk_version, 1, wx.EXPAND, 0)
         sizer_main.Add(sizer_mk, 0, wx.EXPAND, 0)
 

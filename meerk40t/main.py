@@ -10,7 +10,8 @@ import argparse
 import os.path
 import sys
 
-APPLICATION_NAME = "MeerK40t"
+APPLICATION_NAME = "MeerK40t"  # internal key (settings directory), do not rename
+APPLICATION_DISPLAY_NAME = "LDGRBL"
 APPLICATION_VERSION = "0.9.8100"
 
 if not getattr(sys, "frozen", False):
@@ -167,7 +168,7 @@ def run():
 
     # This does version checks, it must be compatible. Py2/3 Code.
     if args.version:
-        print("%s %s" % (APPLICATION_NAME, APPLICATION_VERSION))
+        print("%s %s" % (APPLICATION_DISPLAY_NAME, APPLICATION_VERSION))
         return
     python_version_required = (3, 6)
     if sys.version_info < python_version_required:

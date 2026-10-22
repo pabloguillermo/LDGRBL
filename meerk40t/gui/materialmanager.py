@@ -171,7 +171,7 @@ class ImportDialog(wx.Dialog):
         mydlg = wx.FileDialog(
             self,
             message=_("Choose a library-file"),
-            wildcard="Supported files|*.lib;*.ini;*.clb;*.cfg|EZcad files (*.lib;*.ini)|*.lib;*.ini|Lightburn files (*.clb)|*.clb|MeerK40t operations (*.cfg)|*.cfg|All files (*.*)|*.*",
+            wildcard="Supported files|*.lib;*.ini;*.clb;*.cfg|EZcad files (*.lib;*.ini)|*.lib;*.ini|Lightburn files (*.clb)|*.clb|LDGRBL operations (*.cfg)|*.cfg|All files (*.*)|*.*",
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST | wx.FD_PREVIEW,
         )
         if mydlg.ShowModal() == wx.ID_OK:
@@ -573,7 +573,7 @@ class MaterialPanel(ScrolledPanel):
         )
         self.btn_share = wxButton(self, wx.ID_ANY, _("Share"))
         self.btn_share.SetToolTip(
-            _("Share the current library entry with the MeerK40t community")
+            _("Share the current library entry with the LDGRBL community")
         )
 
         button_box.Add(self.btn_new, 0, wx.EXPAND, 0)
@@ -933,7 +933,7 @@ class MaterialPanel(ScrolledPanel):
         dlg = wx.TextEntryDialog(
             self,
             _(
-                "Thank you for your willingness to share your material setting with the MeerK40t community.\n"
+                "Thank you for your willingness to share your material setting with the LDGRBL community.\n"
                 + "Please provide a name to honor your authorship."
             ),
             caption=_("Share material setting"),

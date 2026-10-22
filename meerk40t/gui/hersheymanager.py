@@ -990,7 +990,7 @@ class PanelFontManager(wx.Panel):
             self,
             wx.ID_ANY,
             _(
-                "MeerK40t can use True-Type-Fonts, Hershey-Fonts or Autocad-86 shape fonts designed to be rendered purely with vectors.\n"
+                "LDGRBL can use True-Type-Fonts, Hershey-Fonts or Autocad-86 shape fonts designed to be rendered purely with vectors.\n"
                 + "They can be scaled, burned like any other vector shape and are therefore very versatile.\n"
                 + "See more: https://en.wikipedia.org/wiki/Hershey_fonts "
             ),
@@ -1427,7 +1427,7 @@ class HersheyFontManager(MWindow):
 
     @staticmethod
     def helptext():
-        return _("Manage the fonts available to MeerK40t")
+        return _("Manage the fonts available to LDGRBL")
 
 
 def register_hershey_stuff(kernel):

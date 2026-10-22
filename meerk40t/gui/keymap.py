@@ -351,4 +351,4 @@ class Keymap(MWindow):
 
     @staticmethod
     def helptext():
-        return _("Configure key-shortcuts to MeerK40ts tool arsenal")
+        return _("Configure key-shortcuts to LDGRBLs tool arsenal")

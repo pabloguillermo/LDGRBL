@@ -32,7 +32,7 @@ def register_panel(window, context):
     )
     pane.dock_proportion = 600
     pane.control = panel
-    pane.helptext = _("Manage and add devices to be used by MeerK40t")
+    pane.helptext = _("Manage and add devices to be used by LDGRBL")
 
     window.on_pane_create(pane)
     context.register("pane/devices", pane)
@@ -700,4 +700,4 @@ class DeviceManager(MWindow):
 
     @staticmethod
     def helptext():
-        return _("Manage and add devices to be used by MeerK40t")
+        return _("Manage and add devices to be used by LDGRBL")

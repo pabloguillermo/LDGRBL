@@ -136,7 +136,7 @@ and a wxpython version <= 4.1.1."""
                 "default": True,
                 "type": bool,
                 "label": _("Remember main window position"),
-                "tip": _("Should MeerK40t remember its last position on the screen?"),
+                "tip": _("Should LDGRBL remember its last position on the screen?"),
                 "page": "Gui",
                 # Hint for translation _("General")
                 "section": "General",
@@ -220,7 +220,7 @@ and a wxpython version <= 4.1.1."""
                         ),
                         _("Particularly useful if you have a touch screen."),
                         _(
-                            "Note: You will need to restart MeerK40t for any change to take effect."
+                            "Note: You will need to restart LDGRBL for any change to take effect."
                         ),
                     )
                 ),
@@ -401,7 +401,7 @@ and a wxpython version <= 4.1.1."""
                 message = _("Something requires your attention")
             from wx.adv import NotificationMessage
 
-            msg = NotificationMessage(title="MeerK40t", message=message)
+            msg = NotificationMessage(title="LDGRBL", message=message)
             msg.Show()
 
         @kernel.console_argument(
@@ -519,7 +519,7 @@ and a wxpython version <= 4.1.1."""
             if platform.system() != "Linux":
                 kernel.busyinfo.start(
                     msg=_(
-                        "Start MeerK40t|V. {version}".format(
+                        "Start LDGRBL|V. {version}".format(
                             version=APPLICATION_VERSION
                         )
                     ),

@@ -620,6 +620,17 @@ class GRBLDevice(Service, Status):
                 "section": "_40_Validation",
             },
             {
+                "attr": "reset_home_on_connect",
+                "object": self,
+                "default": True,
+                "type": bool,
+                "label": _("Reset and home on connect"),
+                "tip": _(
+                    "On connection, send a reset to the device and, once the reset is confirmed, perform a physical home."
+                ),
+                "section": "_40_Validation",
+            },
+            {
                 "attr": "boot_connect_sequence",
                 "object": self,
                 "default": True,

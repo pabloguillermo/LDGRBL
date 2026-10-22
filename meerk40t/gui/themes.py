@@ -65,7 +65,7 @@ class Themes(Service):
                     "style": "option",
                     "choices": ("default", "dark", "light"),
                     "display": (_("System"), _("Dark"), _("Light")),
-                    "tip": _("Will force MeerK40t to start in dark/lightmode despite the system settings"),
+                    "tip": _("Will force LDGRBL to start in dark/lightmode despite the system settings"),
                     "page": "Start",
                     "signals": "restart",
                 },

@@ -740,7 +740,7 @@ def plugin(kernel, lifecycle):
                 "primary": "directory",
                 "allow_deletion": True,
                 "allow_duplication": True,
-                "tip": _("Places where MeerK40t will look for fonts."),
+                "tip": _("Places where LDGRBL will look for fonts."),
             },
         ]
         kernel.register_choices("preferences", choices)

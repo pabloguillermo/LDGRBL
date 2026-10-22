@@ -1128,7 +1128,7 @@ class wxMeerK40t(wx.App, Module):
                 "default": True,
                 "type": bool,
                 "label": _("Single Instance"),
-                "tip": _("Allow only a single instance of MeerK40t."),
+                "tip": _("Allow only a single instance of LDGRBL."),
                 "page": "Start",
             },
             {
@@ -1140,7 +1140,7 @@ class wxMeerK40t(wx.App, Module):
                 "wildcard": wildcard,
                 "label": _("Soundfile"),
                 "tip": _(
-                    "Define the soundfile MeerK40t will play when the 'beep' command is issued"
+                    "Define the soundfile LDGRBL will play when the 'beep' command is issued"
                 )
                 + addon,
                 "page": "Start",
@@ -1483,9 +1483,9 @@ def handleGUIException(exc_type, exc_value, exc_traceback):
 The good news is that you can help us fix this bug by anonymously sending us the crash details."""
     )
     message += "\n" + _(
-        "Only the crash details below are sent. No data from your MeerK40t project is sent. No "
+        "Only the crash details below are sent. No data from your LDGRBL project is sent. No "
         + "personal information is sent either.\n"
-        + "Send the following data to the MeerK40t team?"
+        + "Send the following data to the LDGRBL team?"
     )
     caption = _("Crash Detected! Send Log?")
     data = error_log

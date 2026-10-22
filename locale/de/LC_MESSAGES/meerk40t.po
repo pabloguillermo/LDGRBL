@@ -862,7 +862,7 @@ msgid "or by assigning to a default operation (see above),"
 msgstr "Operation (siehe oben), dann kann MK bei aktiver Option"
 
 #: meerk40t/core/elements/elements.py:357
-msgid "then MeerK40t can create a matching operation for you."
+msgid "then LDGRBL can create a matching operation for you."
 msgstr "automatisch eine passende neuen Arbeitsablauf anlegen."
 
 #: meerk40t/core/elements/elements.py:366
@@ -2694,7 +2694,7 @@ msgstr ""
 "die Dinge zu verbessern.\n"
 
 #: meerk40t/gui/about.py:147
-msgid "* Translators who helped internationalise MeerK40t for worldwide use.\n"
+msgid "* Translators who helped internationalise LDGRBL for worldwide use.\n"
 msgstr ""
 "* Den Übersetzern, die geholfen haben, Meerk40t weltweit nutzbar zu "
 "machen.\n"
@@ -4632,7 +4632,7 @@ msgid "Particularly useful if you have a touch screen."
 msgstr "Vor allem nützlich, wenn man einen Touch-Screen verwendet."
 
 #: meerk40t/gui/plugin.py:204
-msgid "Note: You will need to restart MeerK40t for any change to take effect."
+msgid "Note: You will need to restart LDGRBL for any change to take effect."
 msgstr ""
 "Achtung: damit diese Einstellungen wirksam werden, muss Meerk40t "
 "neugestartet werden."
@@ -5391,8 +5391,8 @@ msgstr ""
 
 #: meerk40t/gui/wxmeerk40t.py:1511
 msgid ""
-"Only the crash details below are sent. No data from your MeerK40t project is sent. No personal information is sent either.\n"
-"Send the following data to the MeerK40t team?"
+"Only the crash details below are sent. No data from your LDGRBL project is sent. No personal information is sent either.\n"
+"Send the following data to the LDGRBL team?"
 msgstr ""
 "Es werden lediglich die unten angezeigten Info gesendet.\nDürfen die "
 "folgenden Daten an das MeerK40t-Team übermittelt werden?"
@@ -5915,7 +5915,7 @@ msgstr "S&chließe Fenster\tCtrl-W"
 
 #: meerk40t/gui/wxmmain.py:4096 meerk40t/gui/wxmmain.py:4100
 msgid "Close Meerk40t"
-msgstr "MeerK40t beenden"
+msgstr "LDGRBL beenden"
 
 #: meerk40t/gui/wxmmain.py:4100
 msgid "E&xit"
@@ -6152,8 +6152,8 @@ msgid "File Not Found"
 msgstr "Datei nicht auffindbar"
 
 #: meerk40t/gui/wxmmain.py:4650
-msgid "&MeerK40t Help"
-msgstr "&MeerK40t Hilfe"
+msgid "&LDGRBL Help"
+msgstr "&LDGRBL Hilfe"
 
 #: meerk40t/gui/wxmmain.py:4654
 msgid "&Online Help"
@@ -6221,8 +6221,8 @@ msgid "You feel something is missing or could be improved? Let us know..."
 msgstr "Eine neue Idee, wie man Meerk40t besser machen kann? Her damit..."
 
 #: meerk40t/gui/wxmmain.py:4792
-msgid "&About MeerK40t"
-msgstr "Ü&ber MeerK40t"
+msgid "&About LDGRBL"
+msgstr "Ü&ber LDGRBL"
 
 #: meerk40t/gui/wxmmain.py:4795
 msgid ""
@@ -9795,11 +9795,11 @@ msgstr "Autocad-SHX-Zeichensätze"
 
 #: meerk40t/gui/hersheymanager.py:992
 msgid ""
-"MeerK40t can use True-Type-Fonts, Hershey-Fonts or Autocad-86 shape fonts designed to be rendered purely with vectors.\n"
+"LDGRBL can use True-Type-Fonts, Hershey-Fonts or Autocad-86 shape fonts designed to be rendered purely with vectors.\n"
 "They can be scaled, burned like any other vector shape and are therefore very versatile.\n"
 "See more: https://en.wikipedia.org/wiki/Hershey_fonts "
 msgstr ""
-"MeerK40t kann True-Type-, Hershey- bzw. Autocad-86-Zeichensätze verwenden, "
+"LDGRBL kann True-Type-, Hershey- bzw. Autocad-86-Zeichensätze verwenden, "
 "die aus einfachen Vektoren zusammengesetzt sind.\nDiese können wie jedes "
 "andere Basiselement skaliert und gebrannt (auch ausgeschnitten) "
 "werden.\nMehr Details: https://en.wikipedia.org/wiki/Hershey_fonts "
@@ -10408,9 +10408,9 @@ msgstr "Erhöht/Verringert die eingestellte Geschwindigkeit um diesen Faktor."
 #: meerk40t/extra/inkscape.py:459
 msgid ""
 "This file contains certain features that might not be fully supported by "
-"MeerK40t"
+"LDGRBL"
 msgstr ""
-"Die Datei enthält SVG-Features, die nicht (vollständig) von MeerK40t "
+"Die Datei enthält SVG-Features, die nicht (vollständig) von LDGRBL "
 "unterstützt werden"
 
 #: meerk40t/extra/inkscape.py:466
@@ -10443,7 +10443,7 @@ msgstr "SVG-Umwandlung"
 
 #: meerk40t/extra/inkscape.py:574
 msgid "Meerk40t does not support all svg-features, so you might want"
-msgstr "MeerK40t unterstützt (noch) nicht alle SVG-Features, deswegen kann"
+msgstr "LDGRBL unterstützt (noch) nicht alle SVG-Features, deswegen kann"
 
 #: meerk40t/extra/inkscape.py:576
 msgid "to preprocess the file to get a proper representation of the design."
@@ -10476,7 +10476,7 @@ msgid ""
 "Path to inkscape-executable. Leave empty to let Meerk40t establish standard "
 "locations"
 msgstr ""
-"Pfad zur Inkscape-Anwendung. Leer lassen, damit MeerK40t die Standard-"
+"Pfad zur Inkscape-Anwendung. Leer lassen, damit LDGRBL die Standard-"
 "Verzeichnisse verwendet"
 
 #: meerk40t/extra/inkscape.py:620
@@ -10754,7 +10754,7 @@ msgstr "Es ist eine neue {type}-Version für {system} verfügbar:"
 
 #: meerk40t/extra/updater.py:65
 msgid "You seem to have the latest {system} version."
-msgstr "Dies scheint die aktuelle {system}-Version von MeerK40t zu sein."
+msgstr "Dies scheint die aktuelle {system}-Version von LDGRBL zu sein."
 
 #: meerk40t/extra/updater.py:70
 msgid ""
@@ -10771,7 +10771,7 @@ msgstr "Konnte keine Versionsinformationen von Github abrufen"
 
 #: meerk40t/extra/updater.py:100 meerk40t/gui/wxmmain.py:4758
 msgid "Check whether a newer version of Meerk40t is available"
-msgstr "Überprüfe, ob eine neuere Version von MeerK40t verfügbar ist"
+msgstr "Überprüfe, ob eine neuere Version von LDGRBL verfügbar ist"
 
 #: meerk40t/extra/updater.py:563
 msgid "Do you want to go the download page?"
@@ -10910,8 +10910,8 @@ msgid "Once per week"
 msgstr "Einmal pro Woche"
 
 #: meerk40t/extra/updater.py:45
-msgid "How often should MeerK40t look for new versions"
-msgstr "Wie oft soll MeerK40t nach neuen Versionen suchen"
+msgid "How often should LDGRBL look for new versions"
+msgstr "Wie oft soll LDGRBL nach neuen Versionen suchen"
 
 #: meerk40t/gui/wxmmain.py:1530
 msgid "Button repeat-interval"
@@ -11286,10 +11286,10 @@ msgstr "Dies importiert die Einstellungen aus einer zuvor gesicherten Version"
 
 #: meerk40t/gui/preferences.py:326
 msgid ""
-"This may make MeerK40t unworkable if the file does not have the right "
+"This may make LDGRBL unworkable if the file does not have the right "
 "format!"
 msgstr ""
-"Dies kann MeerK40t unbenutzbar machen, falls die Datei ungültige Daten "
+"Dies kann LDGRBL unbenutzbar machen, falls die Datei ungültige Daten "
 "enthält!"
 
 #: meerk40t/gui/preferences.py:329
@@ -12772,7 +12772,7 @@ msgid ""
 "Show tips at program start.\n"
 "Even if disabled, 'Tips & Tricks' are always available in the Help-menu."
 msgstr ""
-"Zeigt Tipps zur Nutzung von MeerK40t beim Programmstart an.\nSelbst wenn "
+"Zeigt Tipps zur Nutzung von LDGRBL beim Programmstart an.\nSelbst wenn "
 "das nicht aktiv ist, sind 'Tipps & Tricks' jederzeit im Hilfe-Menu "
 "verfügbar."
 
@@ -12795,10 +12795,10 @@ msgstr "Automatisch laden"
 
 #: meerk40t/gui/tips.py:138
 msgid ""
-"Look for new tips on MeerK40ts website.\n"
+"Look for new tips on LDGRBLs website.\n"
 "The list of tips is constantly expanded.\n"
 msgstr ""
-"Sucht nach neuen Tipps auf der Webseite von MeerK40t.\nDie Liste der Tipps "
+"Sucht nach neuen Tipps auf der Webseite von LDGRBL.\nDie Liste der Tipps "
 "wird immer wider aktualisiert und erweitert."
 
 #: meerk40t/gui/tips.py:205
@@ -12807,7 +12807,7 @@ msgstr "Tipp {idx}/{maxidx}"
 
 #: meerk40t/gui/tips.py:356
 msgid ""
-"Do you want to get extended information about a feature in MeerK40t?\n"
+"Do you want to get extended information about a feature in LDGRBL?\n"
 "Just place your mouse over a window or an UI-element and press F11."
 msgstr ""
 "Werden mehr Informationen über ein Feature / ein Bedienlement "
@@ -12816,11 +12816,11 @@ msgstr ""
 
 #: meerk40t/gui/tips.py:368
 msgid ""
-"MeerK40t supports more than 'just' a K40 laser.\n"
+"LDGRBL supports more than 'just' a K40 laser.\n"
 "You can add more devices in the Device-Manager.\n"
 "And you can even add multiple instances for the same physical device, where you can have different configuration settings (eg regular and rotary)."
 msgstr ""
-"MeerK40t unterstützt mehr als 'nur' einen K40-Laser.\nMan kann weitere "
+"LDGRBL unterstützt mehr als 'nur' einen K40-Laser.\nMan kann weitere "
 "Geräte im Geräte-Manager hinzufügen.\nUnd man kann auch weitere Instanzen "
 "desselben Geräts anlegen, bei denen unterschiedliche Konfigurationen "
 "verwendet werden (etwa für normalen und Drehachsen-Betrieb)."
@@ -12845,30 +12845,30 @@ msgstr ""
 
 #: meerk40t/gui/tips.py:397
 msgid ""
-"MeerK40t can create a so called outline around an element.\n"
+"LDGRBL can create a so called outline around an element.\n"
 "Just select the element, right click on top of it to get the context menu and choose from the 'Outline elements' menu..."
 msgstr ""
-"MeerK40t kann einen Umriss um ein Element zeichnen.\nDas gewünschte Element"
+"LDGRBL kann einen Umriss um ein Element zeichnen.\nDas gewünschte Element"
 " auswählen, mit der rechten Maustaste das Kontext-Menu öffnen und das "
 "'Umrande Elemente...'-Menu nutzen"
 
 #: meerk40t/gui/tips.py:406
 msgid ""
-"MeerK40t has an extensive set of commands that allow a lot of scriptable actions.\n"
+"LDGRBL has an extensive set of commands that allow a lot of scriptable actions.\n"
 "Just open the console window and type 'help'"
 msgstr ""
-"MeerK40t hat eine Vielzahl von Kommandos, die es erlauben, per Script "
+"LDGRBL hat eine Vielzahl von Kommandos, die es erlauben, per Script "
 "Elemente anzulegen, zu verändern und vieles mehr...\nEinfach die Konsole "
 "öffnen und 'help' eingeben."
 
 #: meerk40t/gui/tips.py:417
 msgid ""
 "Do you want to see more Tips & Tricks?\n"
-"Just click on the 'Update'-button to load additional hints from MeerK40ts website.\n"
+"Just click on the 'Update'-button to load additional hints from LDGRBLs website.\n"
 "The list of tips is constantly expanded, so please update it every now and then to learn about new or hidden features."
 msgstr ""
 "Noch mehr Tipps & Tricks?\nEinfach die Option zum automatischen Laden "
-"aktivieren: damit werden neue Tipps von der Webseite von MeerK40t "
+"aktivieren: damit werden neue Tipps von der Webseite von LDGRBL "
 "geladen.\nDie Liste der Tipps wird immer wider aktualisiert und erweitert."
 
 #: meerk40t/gui/tips.py:622
@@ -13348,8 +13348,8 @@ msgid "Share"
 msgstr "Teilen"
 
 #: meerk40t/gui/materialmanager.py:568
-msgid "Share the current library entry with the MeerK40t community"
-msgstr "Den aktuellen Bibliotheks-Eintrag mit der MeerK40t Community teilen."
+msgid "Share the current library entry with the LDGRBL community"
+msgstr "Den aktuellen Bibliotheks-Eintrag mit der LDGRBL Community teilen."
 
 #: meerk40t/gui/materialmanager.py:639
 msgid "Click to hide extended infos"
@@ -13368,10 +13368,10 @@ msgstr "Materialien"
 
 #: meerk40t/gui/materialmanager.py:930
 msgid ""
-"Thank you for your willingness to share your material setting with the MeerK40t community.\n"
+"Thank you for your willingness to share your material setting with the LDGRBL community.\n"
 "Please provide a name to honor your authorship."
 msgstr ""
-"Vielen Dank für die Bereitschaft, diesen Material-Eintrag mit der MeerK40t "
+"Vielen Dank für die Bereitschaft, diesen Material-Eintrag mit der LDGRBL "
 "Community zu teilen.\nBitte den Namen angeben, damit wir die Herkunft "
 "würdigen können."
 
@@ -13622,8 +13622,8 @@ msgid "Directory"
 msgstr "Verzeichnis"
 
 #: meerk40t/extra/hershey.py:742
-msgid "Places where MeerK40t will look for fonts."
-msgstr "Orte, an denen MeerK40t nach Zeichensätzen sucht"
+msgid "Places where LDGRBL will look for fonts."
+msgstr "Orte, an denen LDGRBL nach Zeichensätzen sucht"
 
 #: meerk40t/grbl/plugin.py:35
 msgid "Generic (GRBL-Controller)"
@@ -13710,8 +13710,8 @@ msgid "Single Instance"
 msgstr "Nur 1 Kopie"
 
 #: meerk40t/gui/wxmeerk40t.py:1131
-msgid "Allow only a single instance of MeerK40t."
-msgstr "Erlaubt nur einzige Kopie von MeerK40t"
+msgid "Allow only a single instance of LDGRBL."
+msgstr "Erlaubt nur einzige Kopie von LDGRBL"
 
 #: meerk40t/gui/wxmeerk40t.py:1409
 msgid "Quit"
@@ -14097,8 +14097,8 @@ msgid "Every 10 minutes"
 msgstr "Alle 10 Minuten"
 
 #: meerk40t/gui/wxmmain.py:216
-msgid "How often should MeerK40t save the current workspace"
-msgstr "Wie oft soll MeerK40t den aktuellen Arbeitsbereich sichern"
+msgid "How often should LDGRBL save the current workspace"
+msgstr "Wie oft soll LDGRBL den aktuellen Arbeitsbereich sichern"
 
 #: meerk40t/gui/wxmmain.py:1600
 msgid "Process input while moving slider handle"
@@ -14448,10 +14448,10 @@ msgstr "Nur ein  Element erzeugen"
 
 #: meerk40t/gui/wxmmain.py:1565
 msgid ""
-"When you design an element, e.g. a line, then MeerK40t will allow you to "
+"When you design an element, e.g. a line, then LDGRBL will allow you to "
 "immediately create the next instance of this type."
 msgstr ""
-"Wenn ein Element gezeichnet wird, z.B. eine Linie, erlaubt MeerK40t sofort "
+"Wenn ein Element gezeichnet wird, z.B. eine Linie, erlaubt LDGRBL sofort "
 "ein weiteres Exemplar dieses Typs zu erzeugen."
 
 #: meerk40t/gui/wxmmain.py:1569
@@ -14726,7 +14726,7 @@ msgstr "Einfärben aller {type}"
 msgid ""
 "The modified configuration has been saved.\n"
 "Please note further changes to your configuration will not be saved until the end of the program.\n"
-"So please exit MeerK40t as soon as possible."
+"So please exit LDGRBL as soon as possible."
 msgstr ""
 "Die veränderte Konfiguration wurde gesichert.\nAchtung: weitere Änderungen "
 "an der Konfiguration werden bis zum Programmende nicht gespeichert!\nBitte "
@@ -14998,10 +14998,10 @@ msgstr "Zoom-Animation unterdrücken"
 
 #: meerk40t/gui/wxmmain.py:5871
 msgid ""
-"Apparently MeerK40t did crash during the last session, we apologize for this"
+"Apparently LDGRBL did crash during the last session, we apologize for this"
 " invconvenience."
 msgstr ""
-"Anscheinend ist MeerK40t während der letzten Sicherung abgestürzt, wir "
+"Anscheinend ist LDGRBL während der letzten Sicherung abgestürzt, wir "
 "bitten dafür um Nachsicht."
 
 #: meerk40t/gui/wxmmain.py:5877
@@ -16253,9 +16253,9 @@ msgstr "Hell"
 
 #: meerk40t/gui/themes.py:75
 msgid ""
-"Will force MeerK40t to start in dark/lightmode despite the system settings"
+"Will force LDGRBL to start in dark/lightmode despite the system settings"
 msgstr ""
-"Das zwingt MeerK40t im dunklen/hellen Mode zu starten, unabhängig von den "
+"Das zwingt LDGRBL im dunklen/hellen Mode zu starten, unabhängig von den "
 "Systemeinstellungen"
 
 #: meerk40t/gui/wxmeerk40t.py:1116
@@ -16272,8 +16272,8 @@ msgstr "Sounddatei"
 
 #: meerk40t/gui/wxmeerk40t.py:1144
 msgid ""
-"Define the soundfile MeerK40t will play when the 'beep' command is issued"
-msgstr "Legt die Sounddatei fest, die MeerK40t beim 'beep' Kommando abspielt"
+"Define the soundfile LDGRBL will play when the 'beep' command is issued"
+msgstr "Legt die Sounddatei fest, die LDGRBL beim 'beep' Kommando abspielt"
 
 #: meerk40t/gui/propertypanels/imageproperty.py:673
 msgid "Delete this contour"
@@ -16955,7 +16955,7 @@ msgid "Open command interface"
 msgstr "Öffne Kommandozeilen Fenster"
 
 #: meerk40t/gui/devicepanel.py:35 meerk40t/gui/devicepanel.py:702
-msgid "Manage and add devices to be used by MeerK40t"
+msgid "Manage and add devices to be used by LDGRBL"
 msgstr "Konfiguration und Neuanlage von Geräten"
 
 #: meerk40t/gui/executejob.py:316
@@ -16971,7 +16971,7 @@ msgid "Pick a font to use for vector text"
 msgstr "Wähle einen Zeichensatz für den Vektortext aus"
 
 #: meerk40t/gui/hersheymanager.py:1426
-msgid "Manage the fonts available to MeerK40t"
+msgid "Manage the fonts available to LDGRBL"
 msgstr "Zeichensatz-Verwaltung"
 
 #: meerk40t/gui/imagesplitter.py:555
@@ -16979,7 +16979,7 @@ msgid "Split images for large jobs"
 msgstr "Bilder aufteilen"
 
 #: meerk40t/gui/keymap.py:357
-msgid "Configure key-shortcuts to MeerK40ts tool arsenal"
+msgid "Configure key-shortcuts to LDGRBLs tool arsenal"
 msgstr "Tastaturbelegung editieren"
 
 #: meerk40t/gui/laserpanel.py:89
@@ -17075,7 +17075,7 @@ msgid "Edit object dimensions and position"
 msgstr "Setze Objekt-Position und -Abmessungen"
 
 #: meerk40t/gui/preferences.py:920
-msgid "Configure MeerK40ts behaviour"
+msgid "Configure LDGRBLs behaviour"
 msgstr "MeerK40t-Konfiguration verändern"
 
 #: meerk40t/gui/simpleui.py:364
@@ -17095,8 +17095,8 @@ msgid "Opens the spooler window with all job information"
 msgstr "Öffne Spooler-Fenster mit allen Job-Informationen"
 
 #: meerk40t/gui/tips.py:643
-msgid "Display some tips and tricks how to best use MeerK40t"
-msgstr "Tips und Tricks rund um die Nutzung von MeerK40t"
+msgid "Display some tips and tricks how to best use LDGRBL"
+msgstr "Tips und Tricks rund um die Nutzung von LDGRBL"
 
 #: meerk40t/gui/usbconnect.py:100
 msgid "Display the USB communication control window"
@@ -17189,8 +17189,8 @@ msgid "Levels of Undo-States"
 msgstr "Anzahl Undo-Schritte"
 
 #: meerk40t/core/elements/elements.py:236
-msgid "How many undo-levels shall MeerK40t hold in memory"
-msgstr "Wieviele Zustände soll sich MeerK40t für Undo/Redo merken"
+msgid "How many undo-levels shall LDGRBL hold in memory"
+msgstr "Wieviele Zustände soll sich LDGRBL für Undo/Redo merken"
 
 #: meerk40t/core/elements/element_treeops.py:1238
 msgid "Move laser to placement"
@@ -20652,8 +20652,8 @@ msgid "{name}: {devices}"
 msgstr "{name}: {devices}"
 
 #: meerk40t/extra/coolant.py:343
-msgid "There are no coolant-interfaces known to MeerK40t"
-msgstr "Es sind keine Kühlmittel-Interfaces in MeerK40t bekannt"
+msgid "There are no coolant-interfaces known to LDGRBL"
+msgstr "Es sind keine Kühlmittel-Interfaces in LDGRBL bekannt"
 
 #: meerk40t/extra/coolant.py:379
 msgid "Turns the coolant on using the given method"
@@ -21190,8 +21190,8 @@ msgid ""
 msgstr "Einige Dateien wurden nicht erkannt:\n{rejected_files}"
 
 #: meerk40t/gui/simpleui.py:248
-msgid "MeerK40t"
-msgstr "MeerK40t"
+msgid "LDGRBL"
+msgstr "LDGRBL"
 
 #: meerk40t/gui/spoolerpanel.py:148
 msgid ""
@@ -21396,8 +21396,8 @@ msgid "Offline help file (\"{help}\") was not found."
 msgstr "Offline-Hilfedatei (\"{help}\") wurde nicht gefunden."
 
 #: meerk40t/gui/wxmmain.py:4650
-msgid "Open the MeerK40t Mac help file"
-msgstr "MeerK40t Mac-Hilfedatei öffnen"
+msgid "Open the LDGRBL Mac help file"
+msgstr "LDGRBL Mac-Hilfedatei öffnen"
 
 #: meerk40t/gui/wxmmain.py:5113
 msgid "Cut planning failed because: {error}"
@@ -22658,7 +22658,7 @@ msgstr "Beendet alle Prozesse und schließt das Programm"
 
 #: meerk40t/kernel/kernel.py:3719
 msgid "shuts down all processes, exits and restarts meerk40t"
-msgstr "Beendet alle Prozesse, schließt und startet MeerK40t neu"
+msgstr "Beendet alle Prozesse, schließt und startet LDGRBL neu"
 
 #: meerk40t/kernel/kernel.py:3731
 msgid "list directory"
@@ -23429,8 +23429,8 @@ msgid "Remember main window position"
 msgstr "Hauptfensterposition merken"
 
 #: meerk40t/gui/plugin.py:125
-msgid "Should MeerK40t remember its last position on the screen?"
-msgstr "Soll sich MeerK40t seine letzte Position auf dem Bildschirm merken?"
+msgid "Should LDGRBL remember its last position on the screen?"
+msgstr "Soll sich LDGRBL seine letzte Position auf dem Bildschirm merken?"
 
 #: meerk40t/gui/mkdebug.py:90
 msgid "Device-View"

@@ -3045,7 +3045,7 @@ icon_tabs = VectorIcon(
     edge=25,
 )
 
-icon_meerk40t = VectorIcon(
+icon_meerk40t_vector = VectorIcon(
     fill=(
         # Grey outer circle
         "[0x999999]M 243146.39,109490.94 A 112235.34,112235.34 0 0 1 130911.05,221726.28 112235.34,112235.34 0 0 1 18675.708,109490.94 112235.34,112235.34 0 0 1 130911.05,-2744.4077 112235.34,112235.34 0 0 1 243146.39,109490.94 Z",
@@ -3228,6 +3228,29 @@ icon_meerk40t = VectorIcon(
     ),
     stroke=(),
 )
+
+
+class LdgrblIcon:
+    """Application icon (laser engraver with dragon) loaded from a PNG file."""
+
+    def __init__(self, filename):
+        self._filename = filename
+
+    def GetBitmap(self, use_theme=True, resize=None, **kwargs):
+        import os
+
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), self._filename)
+        image = wx.Image(path, wx.BITMAP_TYPE_PNG)
+        if resize is not None:
+            if isinstance(resize, (int, float)):
+                w = h = int(resize)
+            else:
+                w, h = int(resize[0]), int(resize[1])
+            image = image.Scale(w, h, wx.IMAGE_QUALITY_HIGH)
+        return wx.Bitmap(image)
+
+
+icon_meerk40t = LdgrblIcon("ldgrbl.png")
 
 icon_meerk40t_transparent = VectorIcon(
     stroke=(

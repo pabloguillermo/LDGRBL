@@ -446,6 +446,7 @@ class GrblController:
         self.service = context
         self.connection = None
         self._validation_stage = 0
+        self._home_after_reset = False
 
         self.update_connection()
 
@@ -574,7 +575,9 @@ class GrblController:
             self.log("Could not connect.", type="event")
             return
         self.log("Connecting to GRBL...", type="event")
-        if self.service.reset_on_connect:
+        auto_home = getattr(self.service, "reset_home_on_connect", False)
+        if self.service.reset_on_connect or auto_home:
+            self._home_after_reset = auto_home
             self.driver.reset()
         if not self.service.require_validator:
             # We are required to wait for the validation.
@@ -605,6 +608,7 @@ class GrblController:
         self.log("Disconnecting from GRBL...", type="event")
         self.validate_stop("*")
         self._validation_stage = 0
+        self._home_after_reset = False
 
     def write(self, data):
         """
@@ -949,6 +953,11 @@ class GrblController:
             elif response.startswith(">"):
                 self.log(f"STARTUP: {response}", type="event")
             elif response.startswith(self.service.welcome):
+                if self._home_after_reset:
+                    # Reset confirmed by the welcome message: home physically.
+                    self._home_after_reset = False
+                    self.log("Reset confirmed, homing device", type="event")
+                    self.driver.physical_home()
                 if not self.service.require_validator:
                     # Validation is not required, we reboot.
                     if self.fully_validated():

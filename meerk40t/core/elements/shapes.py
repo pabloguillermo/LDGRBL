@@ -811,7 +811,7 @@ def init_commands(kernel):
                         first = False
                     channel(prop_str)
                 channel(
-                    "Be careful what you do - this is a failsafe method to crash MeerK40t, burn down your house or whatever..."
+                    "Be careful what you do - this is a failsafe method to crash LDGRBL, burn down your house or whatever..."
                 )
             return
         classify_required = False
@@ -1082,7 +1082,7 @@ def init_commands(kernel):
                         prop_str = f"{prop_str}, {d}"
                     channel(prop_str)
                 channel(
-                    "Be careful what you do - this is a failsafe method to crash MeerK40t, burn down your house or whatever..."
+                    "Be careful what you do - this is a failsafe method to crash LDGRBL, burn down your house or whatever..."
                 )
             return
         prop = prop.lower()

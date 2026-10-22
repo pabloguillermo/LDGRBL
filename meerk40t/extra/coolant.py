@@ -340,7 +340,7 @@ def plugin(kernel, lifecycle):
                     channel(_("{name}: {devices}").format(name=c_name, devices=claimed))
 
             else:
-                channel(_("There are no coolant-interfaces known to MeerK40t"))
+                channel(_("There are no coolant-interfaces known to LDGRBL"))
 
         @context.console_command(
             ("coolant_on", "vent_on"), help=_("Turns on the coolant for the active device")

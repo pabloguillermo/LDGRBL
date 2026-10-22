@@ -183,7 +183,7 @@ class PreferencesSavingPanel(wx.Panel):
             message=_(
                 "The modified configuration has been saved.\n"
                 + "Please note further changes to your configuration will not be saved until the end of the program.\n"
-                + "So please exit MeerK40t as soon as possible."
+                + "So please exit LDGRBL as soon as possible."
             ),
             caption=_("Warning"),
             style=wx.OK | wx.ICON_EXCLAMATION,
@@ -321,7 +321,7 @@ class PreferencesSavingPanel(wx.Panel):
         message = _("This will import a previously saved configuration file!") + "\n"
         message += (
             _(
-                "This may make MeerK40t unworkable if the file does not have the right format!"
+                "This may make LDGRBL unworkable if the file does not have the right format!"
             )
             + "\n"
         )
@@ -899,4 +899,4 @@ class Preferences(MWindow):
 
     @staticmethod
     def helptext():
-        return _("Configure MeerK40ts behaviour")
+        return _("Configure LDGRBLs behaviour")

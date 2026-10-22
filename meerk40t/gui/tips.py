@@ -131,7 +131,7 @@ class TipPanel(wx.Panel):
         )
         self.checkbox_update.SetToolTip(
             _(
-                "Look for new tips on MeerK40ts website.\n"
+                "Look for new tips on LDGRBLs website.\n"
                 + "The list of tips is constantly expanded.\n"
             )
         )
@@ -349,7 +349,7 @@ class TipPanel(wx.Panel):
         self.tips.append(
             (
                 _(
-                    "Do you want to get extended information about a feature in MeerK40t?\n"
+                    "Do you want to get extended information about a feature in LDGRBL?\n"
                     + "Just place your mouse over a window or an UI-element and press F11."
                 ),
                 "",
@@ -359,7 +359,7 @@ class TipPanel(wx.Panel):
         self.tips.append(
             (
                 _(
-                    "MeerK40t supports more than 'just' a K40 laser.\n"
+                    "LDGRBL supports more than 'just' a K40 laser.\n"
                     + "You can add more devices in the Device-Manager.\n"
                     + "And you can even add multiple instances for the same physical device, "
                     + "where you can have different configuration settings (eg regular and rotary)."
@@ -391,7 +391,7 @@ class TipPanel(wx.Panel):
         self.tips.append(
             (
                 _(
-                    "MeerK40t can create a so called outline around an element.\nJust select the element, right click on top of it to get the context menu and choose from the 'Outline elements' menu..."
+                    "LDGRBL can create a so called outline around an element.\nJust select the element, right click on top of it to get the context menu and choose from the 'Outline elements' menu..."
                 ),
                 "rect 2cm 2cm 4cm 4cm fill black outline 2mm --steps 4 --outer stroke red",
                 icon_outline.GetBitmap(resize=200),
@@ -400,7 +400,7 @@ class TipPanel(wx.Panel):
         self.tips.append(
             (
                 _(
-                    "MeerK40t has an extensive set of commands that allow a lot of scriptable actions.\nJust open the console window and type 'help'"
+                    "LDGRBL has an extensive set of commands that allow a lot of scriptable actions.\nJust open the console window and type 'help'"
                 ),
                 "pane show console\nhelp",
                 icons8_console.GetBitmap(resize=200),
@@ -410,7 +410,7 @@ class TipPanel(wx.Panel):
             (
                 _(
                     "Do you want to see more Tips & Tricks?\n"
-                    + "Just click on the 'Update'-button to load additional hints from MeerK40ts website.\n"
+                    + "Just click on the 'Update'-button to load additional hints from LDGRBLs website.\n"
                     + "The list of tips is constantly expanded, so please update it every now and then to learn about new or hidden features."
                 ),
                 "",
@@ -638,4 +638,4 @@ class Tips(MWindow):
 
     @staticmethod
     def helptext():
-        return _("Display some tips and tricks how to best use MeerK40t")
+        return _("Display some tips and tricks how to best use LDGRBL")

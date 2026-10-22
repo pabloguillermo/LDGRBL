@@ -32,7 +32,7 @@ from meerk40t.gui.statusbarwidgets.statusbar import CustomStatusBar
 from meerk40t.gui.statusbarwidgets.strokewidget import ColorWidget, StrokeWidget
 from meerk40t.gui.wxutils import TextCtrl, wxButton, wxComboBox, wxStaticText
 from meerk40t.kernel import Job, get_safe_path, lookup_listener, signal_listener
-from meerk40t.main import APPLICATION_NAME
+from meerk40t.main import APPLICATION_DISPLAY_NAME, APPLICATION_NAME
 
 from ..core.units import DEFAULT_PPI, UNITS_PER_INCH, UNITS_PER_PIXEL, Length
 from ..svgelements import Color, Matrix, Path
@@ -208,7 +208,7 @@ class Autosaver:
                     _("Every 10 minutes"),
                 ),
                 "choices": (30, 60, 300, 600),
-                "tip": _("How often should MeerK40t save the current workspace"),
+                "tip": _("How often should LDGRBL save the current workspace"),
                 "page": "Options",
                 # Hint for translation _("Autosave")
                 "section": "Autosave",
@@ -1575,7 +1575,7 @@ class MeerK40t(MWindow):
                 "type": bool,
                 "label": _("Create a single element only"),
                 "tip": _(
-                    "When you design an element, e.g. a line, then MeerK40t will allow you to immediately create the next instance of this type."
+                    "When you design an element, e.g. a line, then LDGRBL will allow you to immediately create the next instance of this type."
                 )
                 + "\n"
                 + _(
@@ -4687,7 +4687,7 @@ class MeerK40t(MWindow):
 
         if platform.system() == "Darwin":
             menuitem = self.help_menu.Append(
-                wx.ID_HELP, _("&MeerK40t Help"), _("Open the MeerK40t Mac help file")
+                wx.ID_HELP, _("&LDGRBL Help"), _("Open the LDGRBL Mac help file")
             )
             self.Bind(wx.EVT_MENU, launch_help_osx, id=menuitem.GetId())
             menuitem = self.help_menu.Append(
@@ -4829,7 +4829,7 @@ class MeerK40t(MWindow):
 
         menuitem = self.help_menu.Append(
             wx.ID_ABOUT,
-            _("&About MeerK40t"),
+            _("&About LDGRBL"),
             _(
                 "Toggle the About window acknowledging those who contributed to creating Meerk40t"
             ),
@@ -5266,7 +5266,7 @@ class MeerK40t(MWindow):
             dev_label = ""
 
         title = (
-            f"{str(self.context.kernel.name)} v{self.context.kernel.version} - "
+            f"{APPLICATION_DISPLAY_NAME} v{self.context.kernel.version} - "
             f"{dev_label}{label}"
         )
         if self.needs_saving:
@@ -5907,7 +5907,7 @@ class MeerK40t(MWindow):
 
             message = (
                 _(
-                    "Apparently MeerK40t did crash during the last session, we apologize for this invconvenience."
+                    "Apparently LDGRBL did crash during the last session, we apologize for this invconvenience."
                 )
                 + "\n"
             )

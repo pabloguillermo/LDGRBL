@@ -243,7 +243,7 @@ class SimpleUI(MWindow):
         _icon.CopyFromBitmap(icons8_computer_support.GetBitmap())
         self.SetIcon(_icon)
         # begin wxGlade: Navigation.__set_properties
-        self.SetTitle(_("MeerK40t"))
+        self.SetTitle(_("LDGRBL"))
         self.panel_instances = list()
 
         self.notebook_main = aui.AuiNotebook(
