@@ -1,13 +1,13 @@
 from copy import copy
 
-from meerk40t.core.node.mixins import FunctionalParameter, Suppressable
+from meerk40t.core.node.mixins import FunctionalParameter
 from meerk40t.core.node.node import Node
 from meerk40t.svgelements import Color
-from meerk40t.core.geomstr import Geomstr
+from meerk40t.tools.geomstr import Geomstr
 from meerk40t.tools.pmatrix import PMatrix
 
 
-class WarpEffectNode(Node, FunctionalParameter, Suppressable):
+class WarpEffectNode(Node, FunctionalParameter):
     """
     Effect node performing a warp. Effects are themselves a sort of geometry node that contains other geometry and
     the required data to produce additional geometry.
@@ -82,20 +82,10 @@ class WarpEffectNode(Node, FunctionalParameter, Suppressable):
         return f"{self.__class__.__name__}('{self.type}', {str(self._parent)})"
 
     def __copy__(self):
-        obj = WarpEffectNode.__new__(WarpEffectNode)
-        obj.__dict__.update(self.__dict__)
-        obj._children = list()
-        obj._references = list()
-        obj._points = list()
-        obj._default_map = dict()
-        obj._parent = None
-        obj._root = None
-        # Deep-copy mutable style objects
-        obj.stroke = copy(self.stroke)
-        obj.fill = copy(self.fill)
-        if hasattr(self, 'perspective_matrix') and self.perspective_matrix is not None:
-            obj.perspective_matrix = copy(self.perspective_matrix)
-        return obj
+        nd = self.node_dict
+        nd["stroke"] = copy(self.stroke)
+        nd["fill"] = copy(self.fill)
+        return WarpEffectNode(**nd)
 
     def get_effect_descriptor(self):
         """
@@ -193,13 +183,6 @@ class WarpEffectNode(Node, FunctionalParameter, Suppressable):
             new_child.hidden = True
         return super().append_child(new_child)
 
-    def append_children(self, new_children, fast=False):
-        if self.autohide:
-            for new_child in new_children:
-                if hasattr(new_child, "hidden"):
-                    new_child.hidden = True
-        return super().append_children(new_children, fast=fast)
-
     def notify_translated(self, node=None, dx=0, dy=0, interim=False, **kwargs):
         Node.notify_translated(self, node, dx, dy, interim=interim, **kwargs)
         if node is self:
@@ -291,8 +274,7 @@ class WarpEffectNode(Node, FunctionalParameter, Suppressable):
                     subs = right_types(e)
                     res.extend(subs)
                 elif e.type.startswith("elem"):
-                    # Is this node hidden? If we autohide, then that's still relevant, if not ignore.
-                    if hasattr(e, "hidden") and e.hidden and not self.autohide:
+                    if hasattr(e, "hidden") and e.hidden:
                         continue
                     res.append(e)
             return res

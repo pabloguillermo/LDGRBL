@@ -27,5 +27,6 @@ Ensure you have **Python 3.8+** installed on your system (Linux, macOS, or Windo
 
 ### 1. Clone the repository
 ```bash
-git clone [https://github.com/pabloguillermo/LDGRBL.git](https://github.com/pabloguillermo/LDGRBL.git)
+git clone https://github.com/pabloguillermo/LDGRBL.git
 cd LDGRBL
+```

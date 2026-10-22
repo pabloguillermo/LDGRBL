@@ -20,11 +20,9 @@ Tree Functions are to be stored: tree/command/type. These store many functions l
 """
 
 import ast
-from collections import deque
 from copy import copy
 from enum import IntEnum
 from time import time
-from typing import Tuple
 
 
 # LINEJOIN
@@ -148,35 +146,7 @@ class Node:
         return f"{self.__class__.__name__}('{self.type}', {str(self._parent)})"
 
     def __copy__(self):
-        # Optimized: Direct __dict__ copy instead of going through __init__
-        # This avoids the expensive node_dict property and __init__ kwargs processing
-        obj = self.__class__.__new__(self.__class__)
-
-        # Copy all attributes directly
-        obj.__dict__.update(self.__dict__)
-
-        # Create new mutable containers to avoid sharing references
-        obj._children = list()
-        obj._references = list()
-        obj._points = list()
-        obj._default_map = dict()
-        # Detach from tree — the copy is a standalone unattached node
-        obj._parent = None
-        obj._root = None
-
-        # Deep-copy the Parameters.settings dict so property setters on the
-        # copy don't mutate the original's values (speed, power, etc.)
-        settings = obj.__dict__.get("settings")
-        if settings is not None:
-            new_settings = dict(settings)
-            # Also deep-copy any mutable values inside settings (e.g.
-            # allowed_attributes list) to prevent cross-contamination.
-            for key, value in new_settings.items():
-                if isinstance(value, list):
-                    new_settings[key] = list(value)
-            obj.__dict__["settings"] = new_settings
-
-        return obj
+        return self.__class__(**self.node_dict)
 
     def __str__(self):
         text = self._formatter
@@ -246,27 +216,22 @@ class Node:
     @property
     def is_visible(self):
         result = True
-        # is it an operation? (use dict checking instead of hasattr for speed)
-        if "output" in self.__dict__:
-            output = self.__dict__["output"]
-            if output:
+        # is it an operation?
+        if hasattr(self, "output"):
+            if self.output:
                 return True
             else:
                 return self._is_visible
-        if "_references" in self.__dict__:
-            references = self.__dict__["_references"]
+        if hasattr(self, "references"):
             valid = False
             flag = False
-            for n in references:
-                # Avoid hasattr on parent - use dict get instead
-                n_parent = n.__dict__.get("_parent")
-                if n_parent and "output" in n_parent.__dict__:
+            for n in self.references:
+                if hasattr(n.parent, "output"):
                     valid = True
-                    output = n_parent.__dict__["output"]
-                    if output is None or output:
+                    if n.parent.output is None or n.parent.output:
                         flag = True
                         break
-                    if n_parent.is_visible:
+                    if n.parent.is_visible:
                         flag = True
                         break
             # If there aren't any references then it is visible by default
@@ -277,9 +242,8 @@ class Node:
     @is_visible.setter
     def is_visible(self, value):
         # is it an operation?
-        if "output" in self.__dict__:
-            output = self.__dict__["output"]
-            if output:
+        if hasattr(self, "output"):
+            if self.output:
                 value = True
         else:
             value = True
@@ -305,7 +269,7 @@ class Node:
                 # but not necessarily emphasized
                 self._selected = True
             self._emphasized_time = time() if value else None
-            self.notify_emphasized(self)
+        self.notify_emphasized(self)
 
     @property
     def emphasized_time(self):
@@ -492,29 +456,32 @@ class Node:
         return self._points
 
     def restore_tree(self, tree_data):
-        """
-        Takes a backup and reapplies it again to the tree.
+        # Takes a backup and reapplies it again to the tree
+        # Caveat: we can't just simply take the backup and load it into the tree,
+        # although it is already a perfectly independent copy.
+        #           self._children.extend(tree_data)
+        # If loaded directly as above then this stored state will be used
+        # as the basis for further modifications consequently changing the
+        # original data (as it is still the original structure) used in the undostack.
+        # tree_data contains the copied branch nodes
 
-        Caveat: we can't just simply take the backup and load it into the tree,
-        although it is already a perfectly independent copy.
-                  self._children.extend(tree_data)
-        If loaded directly as above then this stored state will be used
-        as the basis for further modifications consequently changing the
-        original data (as it is still the original structure) used in the undostack.
-        tree_data contains the copied branch nodes.
-
-        Optimized: attrib_list verification removed since __dict__.update
-        preserves all attributes.
-        """
         self._children.clear()
         links = {id(self): (self, None)}
-
-        root = self._root  # Cache to avoid repeated attribute lookup
-
+        attrib_list = (
+            "_selected",
+            "_emphasized",
+            "_emphasized_time",
+            "_highlighted",
+            "_expanded",
+        )
         for c in tree_data:
             c._build_copy_nodes(links=links)
             node_copy = copy(c)
-            node_copy._root = root
+            for att in attrib_list:
+                if getattr(node_copy, att) != getattr(c, att):
+                    # print (f"Strange {att} not identical, fixing")
+                    setattr(node_copy, att, getattr(c, att))
+            node_copy._root = self._root
             links[id(c)] = (c, node_copy)
 
         # Rebuild structure.
@@ -522,14 +489,6 @@ class Node:
         branches = [links[id(c)][1] for c in tree_data]
         self._children.extend(branches)
         self._validate_tree()
-        # Mark structure dirty so that element caches (e.g.
-        # _elems_cache, _elems_nodes_cache, _emphasized_cache) are
-        # lazily invalidated on next access.  Without this, caches
-        # keep pointing to the old (now orphaned) nodes after an
-        # undo/redo restore.
-        root = self._root if self._root is not None else self
-        if hasattr(root, "_structure_dirty"):
-            root._structure_dirty = True
 
     def _validate_links(self, links):
         for uid, n in links.items():
@@ -542,12 +501,8 @@ class Node:
             if copied_parent is None:
                 # copy_parent should have been copied root, but roots don't copy
                 node_copy._parent = self._root
-                # Fix: Ensure root is properly set
-                node_copy._root = self._root
                 continue
             node_copy._parent = copied_parent
-            # Fix: Ensure root is properly set for all nodes
-            node_copy._root = self._root
             copied_parent._children.append(node_copy)
             if node.type == "reference":
                 try:
@@ -555,8 +510,7 @@ class Node:
                     node_copy.node = copied_referenced
                     copied_referenced._references.append(node_copy)
                 except KeyError:
-                    # Referenced node is not in the backup, clear the reference
-                    node_copy.node = None
+                    pass
 
     def _validate_tree(self):
         for c in self._children:
@@ -565,130 +519,9 @@ class Node:
             assert c in c._parent._children
             for q in c._references:
                 assert q.node is c
-            if (
-                c.type == "reference"
-                and c.node is not None
-                and hasattr(c.node, "_references")
-            ):
+            if c.type == "reference":
                 assert c in c.node._references
-                # Fix: Check if reference target exists and has back-reference
             c._validate_tree()
-
-    def tree_integrity_errors(self, check_references=True, max_nodes=250000):
-        """Return a list of detected tree integrity issues.
-
-        This is intended as a diagnostic tool to find corruption like:
-        - parent cycles (which cause RecursionError in notify_* calls)
-        - parent/children pointer mismatches
-        - duplicate child entries (same object listed twice)
-        - root pointer inconsistencies
-
-        The traversal is iterative and cycle-safe.
-        """
-        errors = []
-
-        expected_root = self._root if getattr(self, "_root", None) is not None else self
-        visited = set()
-        path = set()
-
-        # (node, expected_parent, entering)
-        stack = [(self, None, True)]
-        while stack:
-            node, expected_parent, entering = stack.pop()
-            if entering:
-                # Cycle detection: if node is in current path, we found a back-edge.
-                if node in path:
-                    errors.append(
-                        f"CYCLE detected: node id={id(node)} type={getattr(node, 'type', None)}"
-                    )
-                    # Don't add to visited or path; skip exploring children of this cycle.
-                    continue
-                # Shared subtree: node visited twice via different parents.
-                if node in visited:
-                    errors.append(
-                        f"Node shared (appears under multiple parents): node id={id(node)} type={getattr(node, 'type', None)}"
-                    )
-                    # Don't process again.
-                    continue
-
-                visited.add(node)
-                path.add(node)
-
-                # Parent pointer sanity.
-                actual_parent = getattr(node, "_parent", None)
-                if expected_parent is not None and actual_parent is not expected_parent:
-                    errors.append(
-                        f"Parent mismatch: node id={id(node)} type={getattr(node, 'type', None)} expected_parent_id={id(expected_parent)} actual_parent_id={id(actual_parent) if actual_parent is not None else None}"
-                    )
-                if expected_parent is not None:
-                    try:
-                        if node not in expected_parent._children:
-                            errors.append(
-                                f"Missing from parent's children: node id={id(node)} type={getattr(node, 'type', None)} parent_id={id(expected_parent)}"
-                            )
-                    except Exception:
-                        errors.append(
-                            f"Unable to verify parent children list: node id={id(node)} type={getattr(node, 'type', None)}"
-                        )
-
-                # Root pointer sanity.
-                actual_root = getattr(node, "_root", None)
-                if actual_root is not expected_root:
-                    errors.append(
-                        f"Root mismatch: node id={id(node)} type={getattr(node, 'type', None)} expected_root_id={id(expected_root)} actual_root_id={id(actual_root) if actual_root is not None else None}"
-                    )
-
-                # Duplicate child entries.
-                children = list(getattr(node, "_children", []))
-                try:
-                    if len(children) != len(set(children)):
-                        errors.append(
-                            f"Duplicate child entry detected: parent id={id(node)} type={getattr(node, 'type', None)}"
-                        )
-                except Exception:
-                    errors.append(
-                        f"Unable to evaluate children duplicates: parent id={id(node)} type={getattr(node, 'type', None)}"
-                    )
-
-                # Reference back-link sanity.
-                if check_references:
-                    for ref in list(getattr(node, "_references", [])):
-                        if getattr(ref, "node", None) is not node:
-                            errors.append(
-                                f"Broken reference backlink: target id={id(node)} type={getattr(node, 'type', None)} ref_id={id(ref)}"
-                            )
-                    if getattr(node, "type", None) == "reference":
-                        target = getattr(node, "node", None)
-                        if target is not None and hasattr(target, "_references"):
-                            if node not in getattr(target, "_references", []):
-                                errors.append(
-                                    f"Reference node missing in target._references: ref id={id(node)} target_id={id(target)}"
-                                )
-
-                # Child validation check (e.g. RootNode only accepts branches)
-                # Only perform this check if the node class has overridden the base
-                # Node.validate_child implementation.
-                if type(node).validate_child is not Node.validate_child:
-                    for child in children:
-                        if not node.validate_child(child):
-                            errors.append(
-                                f"Invalid child for parent: parent_type={node.type} child_type={getattr(child, 'type', str(type(child)))} node_id={id(child)}"
-                            )
-
-                # Exit marker.
-                stack.append((node, expected_parent, False))
-                for child in reversed(children):
-                    stack.append((child, node, True))
-
-                if max_nodes is not None and len(visited) >= max_nodes:
-                    errors.append(
-                        f"Traversal aborted after {max_nodes} nodes (tree too large or corrupted)."
-                    )
-                    break
-            else:
-                path.discard(node)
-
-        return errors
 
     def _build_copy_nodes(self, links=None):
         """
@@ -696,32 +529,31 @@ class Node:
         a map between id of original node and copy node. Without any structure. The original
         root will link to `None` since root copies are in-effective.
 
-        Iterative depth-first traversal for performance (avoids 10k+ recursive
-        Python function calls on large trees).
-
         @param links:
         @return:
         """
         if links is None:
             links = {id(self): (self, None)}
-
-        root = self._root  # Cache to avoid repeated attribute lookup
-
-        # Iterative depth-first traversal using an explicit stack.
-        # All __copy__ implementations use __dict__.update which preserves every
-        # attribute from the original, so no attrib_list verification is needed.
-        # Children are pushed in reverse order so pop() yields them left-to-right,
-        # preserving the original child ordering in the links dict for _validate_links.
-        stack = list(reversed(self._children))
-        while stack:
-            c = stack.pop()
-            # Push children in reverse so pop() maintains correct order
-            children = c._children
-            if children:
-                stack.extend(reversed(children))
-            # Copy the node and record the link
+        attrib_list = (
+            "_selected",
+            "_emphasized",
+            "_emphasized_time",
+            "_highlighted",
+            "_expanded",
+            "_translated_text",
+        )
+        for c in self._children:
+            c._build_copy_nodes(links=links)
             node_copy = copy(c)
-            node_copy._root = root
+            for att in attrib_list:
+                if not hasattr(c, att):
+                    continue
+                if not hasattr(node_copy, att) or getattr(node_copy, att) != getattr(
+                    c, att
+                ):
+                    # print (f"Strange {att} not identical, fixing")
+                    setattr(node_copy, att, getattr(c, att))
+            node_copy._root = self._root
             links[id(c)] = (c, node_copy)
         return links
 
@@ -809,6 +641,7 @@ class Node:
         @return:
         """
         for child in copy_node.children:
+            child = child
             if child.type == "reference":
                 child = child.node
             copy_child = copy(child)
@@ -839,27 +672,6 @@ class Node:
         @return:
         """
         return False
-
-    def drop_multi(self, drag_nodes, modify=True, flag=False):
-        """
-        Process multiple drag and drop nodes at once for better performance.
-        Default implementation falls back to individual drops.
-
-        Subclasses should override this to use append_children(fast=True) for bulk operations.
-
-        @param drag_nodes: List of nodes to drop
-        @param modify: Whether to modify the tree
-        @param flag: Additional flag parameter
-        @return: True if any node was successfully dropped
-        """
-        if not drag_nodes:
-            return False
-
-        success = False
-        for drag_node in drag_nodes:
-            if self.drop(drag_node, modify=modify, flag=flag):
-                success = True
-        return success
 
     def reverse(self):
         self._children.reverse()
@@ -1027,7 +839,7 @@ class Node:
     ):
         if invalidate:
             self.set_dirty_bounds()
-        if self._parent is not None and not interim:
+        if self._parent is not None:
             if node is None:
                 node = self
             # Any change to position / size needs a recalculation of the bounds
@@ -1237,14 +1049,13 @@ class Node:
         except AttributeError:
             pass
 
-    def add_reference(self, node=None, pos=None, fast=False, **kwargs):
+    def add_reference(self, node=None, pos=None, **kwargs):
         """
         Add a new node bound to the data_object of the type to the current node.
         If the data_object itself is a node already it is merely attached.
 
         @param node:
         @param pos:
-        @param fast: If True, suppress individual notify_attached signals
         @return:
         """
         if node is None:
@@ -1252,35 +1063,10 @@ class Node:
         if not self.valid_node_for_reference(node):
             # We could raise a ValueError but that will break things...
             return
-        ref = self.add(node=node, type="reference", pos=pos, fast=fast, **kwargs)
+        ref = self.add(node=node, type="reference", pos=pos, **kwargs)
         node._references.append(ref)
 
-    def add_references(self, nodes=None, fast=False, **kwargs):
-        """
-        Add multiple references in a single batch.
-
-        @param nodes: iterable of nodes to reference (will be deduplicated)
-        @param fast: If True, suppress individual notify_attached signals for performance
-        @return:
-
-        Note: This method automatically deduplicates the input nodes to prevent
-        adding the same node multiple times. For optimal performance when adding
-        many references, use fast=True to suppress individual notification signals.
-        """
-        if nodes is None:
-            return
-        # Deduplicate while preserving order (in case order matters for some operations)
-        seen = set()
-        unique_nodes = []
-        for node in nodes:
-            if node not in seen:
-                seen.add(node)
-                unique_nodes.append(node)
-
-        for node in unique_nodes:
-            self.add_reference(node, fast=fast, **kwargs)
-
-    def add_node(self, node, pos=None, fast=False):
+    def add_node(self, node, pos=None):
         """
         Attach an already created node to the tree.
 
@@ -1288,7 +1074,6 @@ class Node:
 
         @param node:
         @param pos:
-        @param fast: If True, suppress notify_attached signal
         @return:
         """
         if node is None:
@@ -1304,16 +1089,7 @@ class Node:
             self._children.append(node)
         else:
             self._children.insert(pos, node)
-        if not fast:
-            node.notify_attached(node, parent=self, pos=pos)
-        else:
-            # If the caller suppressed per-node notifications for performance,
-            # send a coarse-grained structure notification so listeners can react.
-            if self._root is not None:
-                try:
-                    self._root.notify_tree_structure_changed()
-                except Exception:
-                    pass
+        node.notify_attached(node, parent=self, pos=pos)
         return node
 
     def create(self, type, **kwargs):
@@ -1337,19 +1113,18 @@ class Node:
             self._root.notify_created(node)
         return node
 
-    def add(self, type=None, pos=None, fast=False, **kwargs):
+    def add(self, type=None, pos=None, **kwargs):
         """
         Add a new node bound to the data_object of the type to the current node.
         If the data_object itself is a node already it is merely attached.
 
         @param type: Node type to be bootstrapped
         @param pos: Position within current node to add this node
-        @param fast: If True, suppress notify_attached signal
         @return:
         """
         node = self.create(type=type, **kwargs)
         if node is not None:
-            self.add_node(node, pos=pos, fast=fast)
+            self.add_node(node, pos=pos)
         else:
             print(f"Did not produce a valid node for type '{type}'")
         return node
@@ -1361,63 +1136,30 @@ class Node:
         @param root:
         @return:
         """
-        # Optimization: If self and all children already have this root, assume subtree is fine.
-        # This handles the common case of moving within same tree, while catching 1-level inconsistencies.
-        if self._root is root and all(c._root is root for c in self._children):
-            return
-
-        # Iterative traversal to avoid recursion depth issues
-        stack = [self]
-        while stack:
-            node = stack.pop()
-            if node._root is not root:
-                node._root = root
-                stack.extend(node._children)
-            else:
-                # Node has correct root.
-                # If we are here, it means either:
-                # 1. We came from the top-level check failure (some child was wrong)
-                # 2. We are deep in the tree.
-                # To be robust against inconsistencies, we should check children if we are not sure.
-                # But checking all children is expensive.
-                # We assume that if we are traversing, we should fix everything.
-                stack.extend(node._children)
+        self._root = root
+        for c in self._children:
+            c.set_root(root)
 
     def _flatten(self, node):
         """
         Yield this node and all descendants in a flat generation.
 
-        OPTIMIZED VERSION: Uses iterative traversal instead of recursion
-        for better performance on large trees (20-60% improvement).
-
         @param node: starting node
         @return:
         """
-        # Use iterative approach with deque for better performance
-        stack = deque([node])
-        while stack:
-            current = stack.popleft()
-            yield current
-            # Add children in reverse order to maintain left-to-right traversal
-            stack.extendleft(reversed(current.children))
+        yield node
+        yield from self._flatten_children(node)
 
     def _flatten_children(self, node):
         """
         Yield all descendants in a flat generation.
 
-        OPTIMIZED VERSION: Uses iterative traversal instead of recursion
-        for better performance on large trees.
-
         @param node: starting node
         @return:
         """
-        # Use iterative approach with deque for better performance
-        stack = deque(node.children)
-        while stack:
-            current = stack.popleft()
-            yield current
-            # Add children in reverse order to maintain left-to-right traversal
-            stack.extendleft(reversed(current.children))
+        for child in node.children:
+            yield child
+            yield from self._flatten_children(child)
 
     def flat(
         self,
@@ -1429,19 +1171,11 @@ class Node:
         targeted=None,
         highlighted=None,
         lock=None,
-        cascade_criteria=False,
     ):
         """
         Returned flat list of matching nodes. If cascade is set then any matching group will give all the descendants
-        of the given type, even if those descendants are beyond the depth limit. By default (cascade_criteria=False),
-        the sub-elements do not need to match the criteria with respect to either the depth or the emphases.
-        If cascade_criteria=True, descendants must also match the filter criteria (emphasis, selection, etc.).
-
-        OPTIMIZED VERSION: Improved performance for large trees through:
-        - Pre-compiled type sets for O(1) lookup
-        - Combined condition checking
-        - Iterative traversal to avoid recursion overhead
-        - Early exit optimizations
+        of the given type, even if those descendants are beyond the depth limit. The sub-elements do not need to match
+        the criteria with respect to either the depth or the emphases.
 
         @param types: types of nodes permitted to be returned
         @param cascade: cascade all subitems if a group matches the criteria.
@@ -1451,155 +1185,40 @@ class Node:
         @param targeted: match only targeted nodes
         @param highlighted: match only highlighted nodes
         @param lock: match locked nodes
-        @param cascade_criteria: if True, cascaded descendants must also match the filter criteria (default False for backward compatibility)
         @return:
         """
-        # Pre-compile types for faster lookup (O(1) instead of O(n))
-        if types is not None:
-            if isinstance(types, (list, tuple)):
-                types_set = set(types)
-            elif isinstance(types, set):
-                types_set = types
+        node = self
+        if (
+            (targeted is None or targeted == node.targeted)
+            and (emphasized is None or emphasized == node.emphasized)
+            and (selected is None or selected == node.selected)
+            and (highlighted is None or highlighted == node.highlighted)
+            and (lock is None or lock == node.lock)
+        ):
+            # Matches the emphases.
+            if cascade:
+                # Give every type-matched descendant.
+                for c in self._flatten(node):
+                    if types is None or c.type in types:
+                        yield c
+                # Do not recurse further. This node is end node.
+                return
             else:
-                types_set = {types}  # Single type
-        else:
-            types_set = None
-
-        # Create fast condition checker
-        def matches_criteria(node):
-            return (
-                (targeted is None or targeted == node.targeted)
-                and (emphasized is None or emphasized == node.emphasized)
-                and (selected is None or selected == node.selected)
-                and (highlighted is None or highlighted == node.highlighted)
-                and (lock is None or lock == node.lock)
+                if types is None or node.type in types:
+                    yield node
+        if depth is not None:
+            if depth <= 0:
+                # Depth limit reached. Do not evaluate children.
+                return
+            depth -= 1
+        # Check all children.
+        for c in node.children:
+            yield from c.flat(
+                types, cascade, depth, selected, emphasized, targeted, highlighted, lock
             )
-
-        def matches_type(node):
-            return types_set is None or node.type in types_set
-
-        # Use iterative traversal with explicit stack to avoid recursion
-        stack = deque([(self, depth)])
-
-        while stack:
-            node, current_depth = stack.pop()
-
-            # Check if node matches criteria
-            if matches_criteria(node):
-                if cascade:
-                    # Give every type-matched descendant using iterative traversal
-                    for c in self._flatten(node):
-                        if matches_type(c):
-                            # If cascade_criteria is True, also check if descendant matches criteria
-                            if cascade_criteria:
-                                if matches_criteria(c):
-                                    yield c
-                            else:
-                                yield c
-                    continue  # Skip adding children to stack
-                else:
-                    if matches_type(node):
-                        yield node
-
-            # Add children to stack if depth allows
-            if current_depth is None or current_depth > 0:
-                next_depth = None if current_depth is None else current_depth - 1
-                # Add children in reverse order to maintain left-to-right traversal
-                for child in reversed(node.children):
-                    stack.append((child, next_depth))
 
     def count_children(self):
         return len(self._children)
-
-    def validate_child(self, child):
-        """
-        Checks if the child is valid to be added to this node.
-        Subclasses should override this to enforce specific tree structure constraints.
-
-        @param child: The node attempting to be added as a child.
-        @return: True if the child is valid, False otherwise.
-        """
-        return True
-
-    def append_children(self, new_children, fast=False):
-        """
-        Moves the new_children nodes as the last children of the current node.
-        Optimized for bulk operations.
-
-        @param new_children: list of nodes to append
-        @param fast: if True, suppress notify_detached and notify_attached calls
-        """
-        if not new_children:
-            return
-
-        valid_children = []
-        for new_child in new_children:
-            if new_child is None:
-                continue
-            if not self.validate_child(new_child):
-                continue
-            if new_child is self:
-                continue
-            if self.is_a_child_of(new_child):
-                continue
-            valid_children.append(new_child)
-
-        if not valid_children:
-            return
-
-        # Group by parent to optimize removal
-        siblings_by_parent = {}
-        for child in valid_children:
-            if child.parent:
-                siblings_by_parent.setdefault(child.parent, []).append(child)
-
-        for parent, children_to_remove in siblings_by_parent.items():
-            if parent is self:
-                # If we are moving children within the same parent, we just move them to the end.
-                continue
-
-            source_siblings = parent.children
-
-            # Rebuild list if we are removing many
-            # This is O(N) where N is len(source_siblings)
-            if len(children_to_remove) > 5:
-                remove_ids = {id(c) for c in children_to_remove}
-                new_siblings = [c for c in source_siblings if id(c) not in remove_ids]
-                if len(new_siblings) != len(source_siblings):
-                    source_siblings[:] = new_siblings
-                    if not fast:
-                        for child in children_to_remove:
-                            child.notify_detached(child)
-            else:
-                for child in children_to_remove:
-                    if child in source_siblings:
-                        source_siblings.remove(child)
-                        if not fast:
-                            child.notify_detached(child)
-
-        destination_siblings = self.children
-        for new_child in valid_children:
-            # Check if likely already there (optimize for same-parent-moves if logic added above)
-            if new_child.parent is self:
-                if new_child in destination_siblings:
-                    destination_siblings.remove(new_child)
-                    if not fast:
-                        new_child.notify_detached(new_child)
-
-            destination_siblings.append(new_child)
-            new_child._parent = self
-            new_child.set_root(self._root)
-            if not fast:
-                new_child.notify_attached(new_child)
-
-        # If we suppressed per-child notifications for performance (fast=True)
-        # emit a single, coarse-grained structural notification on the root so
-        # listeners (for example the elements service cache) can invalidate.
-        if fast and self._root is not None:
-            try:
-                self._root.notify_tree_structure_changed()
-            except Exception:
-                pass
 
     def append_child(self, new_child):
         """
@@ -1608,18 +1227,6 @@ class Node:
 
         """
         if new_child is None:
-            return
-
-        if not self.validate_child(new_child):
-            return
-
-        # Prevent corrupting the tree by creating a parent-cycle.
-        # This happens if we try to append an ancestor (or self) under a descendant.
-        # Example: parent.append_child(child); child.append_child(parent) -> cycle.
-        if new_child is self:
-            return
-
-        if self.is_a_child_of(new_child):
             return
         new_parent = self
         belonged_to_me = bool(new_child.parent is self)
@@ -1636,12 +1243,10 @@ class Node:
         if belonged_to_me:
             destination_siblings.insert(0, new_child)
             new_child._parent = new_parent
-            new_child.set_root(new_parent._root)
             new_child.notify_attached(new_child, pos=0)
         else:
             destination_siblings.append(new_child)  # Add child.
             new_child._parent = new_parent
-            new_child.set_root(new_parent._root)
             new_child.notify_attached(new_child)
 
     def insert_sibling(self, new_sibling, below=True):
@@ -1650,28 +1255,10 @@ class Node:
         If the node exists elsewhere in the tree it will be removed from that location.
         """
         reference_sibling = self
-        if new_sibling is None:
-            return
-
-        destination_parent = reference_sibling.parent
-        if destination_parent is None:
-            # Cannot insert sibling if reference has no parent (it's a root).
-            return
-
-        if not destination_parent.validate_child(new_sibling):
-            return
-
-        # Prevent corrupting the tree by creating a parent-cycle.
-        # If the destination parent is within new_sibling's subtree, reparenting would cycle.
-        if destination_parent is new_sibling:
-            return
-
-        if destination_parent.is_a_child_of(new_sibling):
-            return
         source_siblings = (
             None if new_sibling.parent is None else new_sibling.parent.children
         )
-        destination_siblings = destination_parent.children
+        destination_siblings = reference_sibling.parent.children
 
         if source_siblings:
             source_siblings.remove(new_sibling)
@@ -1686,88 +1273,7 @@ class Node:
         new_sibling.notify_detached(new_sibling)
         destination_siblings.insert(reference_position, new_sibling)
         new_sibling._parent = reference_sibling._parent
-        new_sibling.set_root(reference_sibling._root)
         new_sibling.notify_attached(new_sibling, pos=reference_position)
-
-    def insert_siblings(self, new_siblings, below=True, fast=False):
-        """
-        Add the new_siblings nodes next to the current node.
-        Optimized for bulk moves.
-
-        @param new_siblings: list of nodes to insert
-        @param below: insert below current node (True) or above (False)
-        @param fast: if True, suppress notify_detached and notify_attached calls
-        """
-        if not new_siblings:
-            return
-
-        reference_sibling = self
-        destination_parent = reference_sibling.parent
-        if destination_parent is None:
-            return
-
-        valid_siblings = []
-        for sibling in new_siblings:
-            if sibling is None:
-                continue
-            if not destination_parent.validate_child(sibling):
-                continue
-            if destination_parent is sibling:
-                continue
-            if destination_parent.is_a_child_of(sibling):
-                continue
-            valid_siblings.append(sibling)
-
-        if not valid_siblings:
-            return
-
-        # Bulk Remove
-        siblings_by_parent = {}
-        for child in valid_siblings:
-            if child.parent:
-                siblings_by_parent.setdefault(child.parent, []).append(child)
-
-        for parent, children_to_remove in siblings_by_parent.items():
-            source_siblings = parent.children
-
-            # If removing from destination parent, indices might shift, but we rely on re-finding reference later
-            if len(children_to_remove) > 5:
-                remove_ids = {id(c) for c in children_to_remove}
-                new_source = [c for c in source_siblings if id(c) not in remove_ids]
-                if len(new_source) != len(source_siblings):
-                    source_siblings[:] = new_source
-                    if not fast:
-                        for child in children_to_remove:
-                            child.notify_detached(child)
-            else:
-                for child in children_to_remove:
-                    if child in source_siblings:
-                        source_siblings.remove(child)
-                        if not fast:
-                            child.notify_detached(child)
-
-        # Bulk Insert
-        destination_siblings = destination_parent.children
-
-        # Re-find reference position as it might have moved if we removed siblings from the same list
-        try:
-            reference_position = destination_siblings.index(reference_sibling)
-            if below:
-                reference_position += 1
-        except ValueError:
-            reference_position = 0
-
-        # Insert all at once
-        current_len = len(destination_siblings)
-        destination_siblings[reference_position:reference_position] = valid_siblings
-
-        # Verify correctness of object identity if needed, but python list slice assignment works reliably
-
-        for i, child in enumerate(valid_siblings):
-            child._parent = destination_parent
-            child.set_root(destination_parent._root)
-            if not fast:
-                child.notify_attached(child, pos=reference_position + i)
 
     def replace_node(self, keep_children=None, *args, **kwargs):
         """
@@ -1782,15 +1288,9 @@ class Node:
         parent._children.remove(self)
         self.notify_detached(self)
         node = parent.add(*args, **kwargs, pos=index)
-        node._references.clear()
-        for ref in list(self._references):
-            ref.node = node
-            if hasattr(ref, "_item"):
-                ref._item = None
-            node._references.append(ref)
-            # ref.remove_node()
-        self._references.clear()
         self.notify_destroyed()
+        for ref in list(self._references):
+            ref.remove_node()
         if keep_children:
             for ref in list(self._children):
                 node._children.append(ref)
@@ -1880,15 +1380,6 @@ class Node:
             self.notify_detached(self)
             if destroy:
                 self.notify_destroyed(self)
-        else:
-            # fast=True suppresses per-node detach/destroy notifications.
-            # Emit a single coarse-grained root notification so listeners can
-            # invalidate caches or otherwise react to structural change.
-            if self._root is not None:
-                try:
-                    self._root.notify_tree_structure_changed()
-                except Exception:
-                    pass
         if references:
             for ref in list(self._references):
                 ref.remove_node(fast=fast)
@@ -1900,30 +1391,16 @@ class Node:
     def remove_all_children(self, fast=False, destroy=True):
         """
         Recursively removes all children of the current node.
-        Optimized to clear list first.
         """
-        children = list(self.children)
-        self.children.clear()
-        self.set_dirty_bounds()
-        for child in children:
+        for child in list(self.children):
             child.remove_all_children(fast=fast, destroy=destroy)
             child.remove_node(fast=fast, destroy=destroy)
-        if fast and self._root is not None:
-            try:
-                self._root.notify_tree_structure_changed()
-            except Exception:
-                pass
 
     def is_a_child_of(self, node):
-        # Walk up the parent chain, but guard against potential corruption (cycles)
-        # so this cannot infinite-loop.
-        # Note: a node is never a child of itself, so we check parents only.
-        candidate = self.parent
-        visited = set()
-        while candidate is not None and candidate not in visited:
+        candidate = self
+        while candidate is not None:
             if candidate is node:
                 return True
-            visited.add(candidate)
             candidate = candidate.parent
         return False
 
@@ -1967,52 +1444,35 @@ class Node:
     @staticmethod
     def union_bounds(
         nodes, bounds=None, attr="bounds", ignore_locked=True, ignore_hidden=False
-    ) -> Tuple[float, float, float, float]:
+    ):
         """
         Returns the union of the node list given, optionally unioned the given bounds value
 
-        This method uses an optimized approach that minimizes memory allocations
-        and uses early termination for better performance.
-
-        @return: union of all bounds within the iterable as (xmin, ymin, xmax, ymax)
+        @return: union of all bounds within the iterable.
         """
-        # Initialize bounds
         if bounds is None:
             xmin = float("inf")
             ymin = float("inf")
-            xmax = float("-inf")
-            ymax = float("-inf")
+            xmax = -xmin
+            ymax = -ymin
         else:
             xmin, ymin, xmax, ymax = bounds
-
-        # Single pass through nodes with optimized attribute access
         for e in nodes:
-            # Use safe attribute access with defaults for reliability
-            if ignore_locked and getattr(e, "lock", False):
+            if ignore_locked and e.lock:
                 continue
             if ignore_hidden and getattr(e, "hidden", False):
                 continue
-
-            # Direct attribute access (avoid getattr overhead for common case)
-            box = (
-                getattr(e, "bounds", None)
-                if attr == "bounds"
-                else getattr(e, attr, None)
-            )
+            box = getattr(e, attr, None)
             if box is None:
                 continue
-
-            # Update bounds with minimal comparisons
-            box_xmin, box_ymin, box_xmax, box_ymax = box
-            if box_xmin < xmin:
-                xmin = box_xmin
-            if box_xmax > xmax:
-                xmax = box_xmax
-            if box_ymin < ymin:
-                ymin = box_ymin
-            if box_ymax > ymax:
-                ymax = box_ymax
-
+            if box[0] < xmin:
+                xmin = box[0]
+            if box[2] > xmax:
+                xmax = box[2]
+            if box[1] < ymin:
+                ymin = box[1]
+            if box[3] > ymax:
+                ymax = box[3]
         return xmin, ymin, xmax, ymax
 
     @property

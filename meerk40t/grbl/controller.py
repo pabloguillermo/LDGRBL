@@ -468,21 +468,8 @@ class GrblController:
         self._log = None
 
         self._paused = False
-        self._warned_flip_y = False
         self._watchers = []
         self.is_shutdown = False
-        self._last_state = None
-
-    @property
-    def last_state(self):
-        return self._last_state
-
-    @property
-    def error_condition(self):
-        # Testcase
-        if self._last_state is not None:
-            return self._last_state in ("alarm", "hold", "door", "check")
-        return False
 
     def __repr__(self):
         return f"GRBLController('{self.service.location()}')"
@@ -590,19 +577,12 @@ class GrblController:
         if self.service.reset_on_connect:
             self.driver.reset()
         if not self.service.require_validator:
+            # We are required to wait for the validation.
             if self.service.boot_connect_sequence:
                 self._validation_stage = 1
                 self.validate_start("$")
             else:
                 self._validation_stage = 5
-        elif self.service.boot_connect_sequence:
-            # Serial/TCP may not re-send the welcome without a soft reset; start
-            # validation if the recv thread never sees one.
-            self.service.threaded(
-                self._connect_validation_fallback,
-                thread_name="grbl-connect-validate",
-                daemon=True,
-            )
         if self.service.startup_commands:
             self.log("Queue startup commands", type="event")
             lines = self.service.startup_commands.split("\n")
@@ -658,9 +638,6 @@ class GrblController:
         if "\x18" in data:
             with self._sending_lock:
                 self._sending_queue.clear()
-            with self._forward_lock:
-                self._forward_buffer.clear()
-            self._assembled_response = []
         self.service.signal(
             "grbl;buffer", len(self._sending_queue) + len(self._realtime_queue)
         )
@@ -732,18 +709,6 @@ class GrblController:
                 with self._forward_lock:
                     self._forward_buffer.clear()
 
-    def _connect_validation_fallback(self):
-        """Start boot validation when GRBL does not send a welcome on attach."""
-        delay = max(0.5, self.service.connect_delay / 1000)
-        time.sleep(delay)
-        if not self.connection.connected or self.fully_validated():
-            return
-        if self._validation_stage != 0:
-            return
-        self.log("Starting validation (no welcome received).", type="event")
-        self._validation_stage = 1
-        self.validate_start("$")
-
     def _rstop(self, *args):
         self._recving_thread = None
 
@@ -767,25 +732,6 @@ class GrblController:
     # GRBL SEND ROUTINES
     ####################
 
-    def _expects_ok(self, line):
-        """GRBL line commands get ok; status/pause/resume/reset bytes do not."""
-        if not line:
-            return False
-        core = line.strip("\r\n \t")
-        if not core:
-            return False
-        if core in ("?", "!", "~") or "\x18" in line:
-            return False
-        return "\r" in line or "\n" in line
-
-    def _send_realtime(self, data):
-        """Send GRBL realtime bytes without forward-buffer tracking (no ok)."""
-        if not data:
-            return
-        writer = getattr(self.connection, "realtime_write", self.connection.write)
-        writer(data)
-        self.log(data, type="send")
-
     def _send(self, line):
         """
         Write the line to the connection, announce it to the send channel, and add it to the forward buffer.
@@ -796,8 +742,6 @@ class GrblController:
         with self._forward_lock:
             self._forward_buffer += bytes(line, encoding="latin-1")
         self.connection.write(line)
-        # print(f"OUT: {line.strip()} [timestamp={time.time():.2f}]")
-
         self.log(line, type="send")
 
     def _sending_realtime(self):
@@ -813,10 +757,7 @@ class GrblController:
         if "~" in line:
             self._paused = False
         if line is not None:
-            if self._expects_ok(line):
-                self._send(line)
-            else:
-                self._send_realtime(line)
+            self._send(line)
         if "\x18" in line:
             self._paused = False
             with self._forward_lock:
@@ -927,9 +868,6 @@ class GrblController:
             while not response:
                 try:
                     response = self.connection.read()
-                    # # Dump the response to see whats happening:
-                    # if response:
-                    #     print(f"IN : {response} [timestamp={time.time():.2f}]")
                 except (ConnectionAbortedError, AttributeError):
                     return
                 if not response:
@@ -1041,13 +979,8 @@ class GrblController:
         self.validate_stop("*")
 
     def _process_status_message(self, response):
-        if not response.endswith(">"):
-            self.log(f"Status message not terminated: {response}", type="event")
-            return
         message = response[1:-1]
         data = list(message.split("|"))
-        self._last_state = data[0].lower()
-        # print (f"Data: {data[0]} -> last_state={self._last_state} -> error_condition={self.error_condition}")
         self.service.signal("grbl:state", data[0])
         for datum in data[1:]:
             # While valid some grbl replies might violate the parsing convention.
@@ -1068,23 +1001,10 @@ class GrblController:
                 try:
                     nx = float(coords[0])
                     ny = float(coords[1])
-                    if (
-                        ny < -0.5
-                        and not self.service.flip_y
-                        and not self._warned_flip_y
-                    ):
-                        self._warned_flip_y = True
-                        self.log(
-                            "GRBL machine Y is negative (into bed) but Device "
-                            "'Flip Y' is off — Y jogs may trigger ALARM:2 soft "
-                            "limit. Enable Flip Y and Home corner top-left, then "
-                            "restart MeerK40t.",
-                            type="warning",
-                        )
 
-                    # Keep driver native position aligned with MPos for confined
-                    # jogs (GRBL only reported position during connect before).
-                    self.driver.declare_position(nx, ny)
+                    if not self.fully_validated():
+                        # During validation, we declare positions.
+                        self.driver.declare_position(nx, ny)
                     ox = self.driver.mpos_x
                     oy = self.driver.mpos_y
 

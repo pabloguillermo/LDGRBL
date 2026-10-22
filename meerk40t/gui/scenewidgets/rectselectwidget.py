@@ -3,7 +3,6 @@ Specifically draws the rectangle selection box and deals with emphasis of select
 Special case: if the user did not move the mouse within the first 0.5 seconds after
 the initial mouse press then we assume a drag move.
 """
-
 from time import perf_counter
 
 import numpy as np
@@ -18,10 +17,7 @@ from meerk40t.gui.scene.scene import (
 )
 from meerk40t.gui.scene.widget import Widget
 from meerk40t.gui.wxutils import dip_size, get_gc_full_scale, get_matrix_scale
-from meerk40t.core.geomstr import NON_GEOMETRY_TYPES
-
-
-MAX_POINTS_FOR_SNAPPING = 100000
+from meerk40t.tools.geomstr import NON_GEOMETRY_TYPES
 
 
 class RectSelectWidget(Widget):
@@ -51,8 +47,8 @@ class RectSelectWidget(Widget):
 
     was_lb_raised = False
 
-    def __init__(self, scene, **kwargs):
-        Widget.__init__(self, scene, all=True, **kwargs)
+    def __init__(self, scene):
+        Widget.__init__(self, scene, all=True)
         # Color for selection rectangle (hit, cross, enclose)
         self.selection_style = [
             [
@@ -93,152 +89,88 @@ class RectSelectWidget(Widget):
 
     @property
     def sector(self):
-        """
-        Cache the sector calculation to avoid repeated computations.
-        """
-        if not hasattr(self, "_cached_sector") or self._cached_sector is None:
-            if self.start_location is None or self.end_location is None:
-                return 0
-            sx = self.start_location[0]
-            sy = self.start_location[1]
-            ex = self.end_location[0]
-            ey = self.end_location[1]
-            if sx <= ex:
-                self._cached_sector = 0 if sy <= ey else 1
-            else:
-                self._cached_sector = 3 if sy <= ey else 2
-        return self._cached_sector
+        sx = self.start_location[0]
+        sy = self.start_location[1]
+        ex = self.end_location[0]
+        ey = self.end_location[1]
+        if sx <= ex:
+            return 0 if sy <= ey else 1
+        else:
+            return 3 if sy <= ey else 2
 
     def rect_select(self, elements, sx, sy, ex, ey):
-        """
-        Optimized rectangle selection with reduced redundant calculations.
-        """
         sector = self.sector
         selected = False
-        selection_method = self.selection_method[sector]
-
-        # Pre-calculate selection rectangle bounds
-        sel_left = min(sx, ex)
-        sel_right = max(sx, ex)
-        sel_top = min(sy, ey)
-        sel_bottom = max(sy, ey)
-
-        # We don't want every single element to issue a signal
+        # We don't want every single element to to issue a signal
         with elements.signalfree("emphasized"):
             for node in elements.elems():
                 try:
-                    bounds = node.bounds
+                    q = node.bounds
                 except AttributeError:
                     continue  # This element has no bounds.
-                if bounds is None:
+                if q is None:
                     continue
                 if hasattr(node, "hidden") and node.hidden:
                     continue
                 if hasattr(node, "can_emphasize") and not node.can_emphasize:
                     continue
+                xmin = q[0]
+                ymin = q[1]
+                xmax = q[2]
+                ymax = q[3]
+                # no hit
+                cover = 0
+                # Check Hit
+                # The rectangles don't overlap if
+                # one rectangle's minimum in some dimension
+                # is greater than the other's maximum in
+                # that dimension.
+                if not ((sx > xmax) or (xmin > ex) or (sy > ymax) or (ymin > ey)):
+                    cover = self.SELECTION_TOUCH
+                    # If selection rect is fully inside an object then ignore
+                    if sx > xmin and ex < xmax and sy > ymin and ey < ymax:
+                        cover = 0
 
-                # Unpack bounds for clarity and performance
-                xmin, ymin, xmax, ymax = bounds
-
-                # Early exit if rectangles don't overlap
+                # Check Cross
                 if (
-                    sel_right < xmin
-                    or sel_left > xmax
-                    or sel_bottom < ymin
-                    or sel_top > ymax
+                    ((sx <= xmin) and (xmax <= ex))
+                    and not ((sy > ymax) or (ey < ymin))
+                    or ((sy <= ymin) and (ymax <= ey))
+                    and not ((sx > xmax) or (ex < xmin))
                 ):
-                    cover = 0
+                    cover = self.SELECTION_CROSS
+                # Check contain
+                if ((sx <= xmin) and (xmax <= ex)) and ((sy <= ymin) and (ymax <= ey)):
+                    cover = self.SELECTION_ENCLOSE
+
+                if "shift" in self.modifiers:
+                    # Add Selection
+                    if cover >= self.selection_method[sector]:
+                        node.emphasized = True
+                        node.selected = True
+                        selected = True
+                elif "ctrl" in self.modifiers:
+                    # Invert Selection
+                    if cover >= self.selection_method[sector]:
+                        node.emphasized = not node.emphasized
+                        node.selected = node.emphasized
+                        selected = True
                 else:
-                    # Determine coverage type
-                    cover = self._calculate_coverage(
-                        sel_left, sel_top, sel_right, sel_bottom, xmin, ymin, xmax, ymax
-                    )
-
-                # Apply selection based on modifiers and coverage
-                if cover >= selection_method:
-                    selected |= self._apply_selection(node, cover)
-
-    def _calculate_coverage(
-        self, sel_left, sel_top, sel_right, sel_bottom, xmin, ymin, xmax, ymax
-    ):
-        """
-        Calculate the coverage type (touch, cross, enclose) for an element.
-        Optimized version with clearer logic and early returns.
-        """
-        # Check if selection rectangle is fully inside the element (ignore)
-        if (
-            sel_left > xmin
-            and sel_right < xmax
-            and sel_top > ymin
-            and sel_bottom < ymax
-        ):
-            return 0
-
-        # Check for enclosure (element fully contained in selection)
-        if (
-            sel_left <= xmin
-            and xmax <= sel_right
-            and sel_top <= ymin
-            and ymax <= sel_bottom
-        ):
-            return self.SELECTION_ENCLOSE
-
-        # Check for crossing (element spans selection boundary in one dimension)
-        if (
-            (sel_left <= xmin and xmax <= sel_right)
-            and sel_top <= ymax
-            and sel_bottom >= ymin
-            or (sel_top <= ymin and ymax <= sel_bottom)
-            and sel_left <= xmax
-            and sel_right >= xmin
-        ):
-            return self.SELECTION_CROSS
-
-        # Default to touch if rectangles overlap
-        return self.SELECTION_TOUCH
-
-    def _apply_selection(self, node, cover):
-        """
-        Apply selection logic based on current modifiers.
-        Returns True if selection was changed.
-        """
-        if "shift" in self.modifiers:
-            # Add Selection
-            node.emphasized = True
-            node.selected = True
-            return True
-        elif "ctrl" in self.modifiers:
-            # Invert Selection
-            node.emphasized = not node.emphasized
-            node.selected = node.emphasized
-            return True
-        else:
-            # Replace Selection
-            node.emphasized = True
-            node.selected = True
-            return True
+                    # Replace Selection
+                    if cover >= self.selection_method[sector]:
+                        node.emphasized = True
+                        node.selected = True
+                        selected = True
+                    else:
+                        node.emphasized = False
+                        node.selected = False
+        if selected:
+            self.scene.context.signal("element_clicked")
 
     def update_statusmsg(self, value):
-        """Cache status messages to avoid redundant updates."""
         if value != self.store_last_msg:
             self.store_last_msg = value
             self.scene.context.signal("statusmsg", value)
-
-    def _get_cached_status_message(self):
-        """Cache the status message to avoid repeated string operations."""
-        if not hasattr(self, "_cached_status_msg") or self._cached_status_msg is None:
-            sector = self.sector
-            _ = self.scene.context._
-            base_msg = _(self.selection_style[self.selection_method[sector] - 1][2])
-
-            if "shift" in self.modifiers:
-                self._cached_status_msg = base_msg + _(self.selection_text_shift)
-            elif "ctrl" in self.modifiers:
-                self._cached_status_msg = base_msg + _(self.selection_text_control)
-            else:
-                self._cached_status_msg = base_msg
-
-        return self._cached_status_msg
 
     # debug_msg = ""
 
@@ -253,30 +185,29 @@ class RectSelectWidget(Widget):
                 x = x[0]
             return box[0] <= x <= box[2] and box[1] <= y <= box[3]
 
-        # Use the memory-safe nearest-neighbor helper which uses a KD-tree if SciPy is available
-        try:
-            from meerk40t.core.spatial import shortest_distance as _shortest_distance
+        def shortest_distance(p1, p2, tuplemode):
+            """
+            Calculates the shortest distance between two arrays of 2-dimensional points.
+            """
+            try:
+                # Calculate the Euclidean distance between each point in p1 and p2
+                if tuplemode:
+                    # For an array of tuples:
+                    dist = np.sqrt(np.sum((p1[:, np.newaxis] - p2) ** 2, axis=2))
+                else:
+                    # For an array of complex numbers
+                    dist = np.abs(p1[:, np.newaxis] - p2[np.newaxis, :])
 
-            def shortest_distance(p1, p2, tuplemode):
-                try:
-                    return _shortest_distance(p1, p2, tuplemode)
-                except Exception:
-                    return None, None, None
-        except Exception:
-            # Fallback: keep original naive implementation if import fails
-            def shortest_distance(p1, p2, tuplemode):
-                try:
-                    if tuplemode:
-                        dist = np.sqrt(np.sum((p1[:, np.newaxis] - p2) ** 2, axis=2))
-                    else:
-                        dist = np.abs(p1[:, np.newaxis] - p2[np.newaxis, :])
-                    min_dist = np.min(dist)
-                    if np.isnan(min_dist):
-                        return None, 0, 0
-                    min_indices = np.argwhere(dist == min_dist)
-                    return min_dist, p1[min_indices[0][0]], p2[min_indices[0][1]]
-                except Exception:
-                    return None, None, None
+                # Find the minimum distance and its corresponding indices
+                min_dist = np.min(dist)
+                if np.isnan(min_dist):
+                    return None, 0, 0
+                min_indices = np.argwhere(dist == min_dist)
+
+                # Return the coordinates of the two points
+                return min_dist, p1[min_indices[0][0]], p2[min_indices[0][1]]
+            except Exception:  # out of memory eg
+                return None, None, None
 
         def move_to(dx, dy):
             if dx == 0 and dy == 0:
@@ -308,7 +239,8 @@ class RectSelectWidget(Widget):
         def check_leftdown(space_pos):
             self.mouse_down_time = perf_counter()
             self.mode = "unclear"
-            self._set_locations(space_pos, space_pos)
+            self.start_location = space_pos
+            self.end_location = space_pos
             if contains(self.scene.context.elements._emphasized_bounds, space_pos):
                 self.can_drag_move = True
 
@@ -332,7 +264,6 @@ class RectSelectWidget(Widget):
             if self.mode == "select":
                 self.scene.request_refresh()
                 self.end_location = space_pos
-                self._clear_sector_cache()  # Clear cache when end location changes
             elif self.mode == "move":
                 dx = space_pos[4]
                 dy = space_pos[5]
@@ -359,7 +290,7 @@ class RectSelectWidget(Widget):
             did_snap_to_point = False
             if (
                 self.scene.context.snap_points
-                and (not modifiers or "shift" not in modifiers)
+                and "shift" not in modifiers
                 and b is not None
             ):
                 gap = self.scene.context.action_attract_len / get_matrix_scale(matrix)
@@ -413,37 +344,24 @@ class RectSelectWidget(Widget):
                         if not ignore:
                             target.append(end)
                         last = end
-
-                total_points = len(other_points) + len(selected_points)
-                if (
-                    other_points
-                    and selected_points
-                    and total_points <= MAX_POINTS_FOR_SNAPPING
-                ):
-                    try:
-                        np_other = np.asarray(other_points)
-                        np_selected = np.asarray(selected_points)
-                        dist, pt1, pt2 = shortest_distance(np_other, np_selected, False)
-                    except MemoryError:
-                        dist, pt1, pt2 = None, None, None
+                # t2 = perf_counter()
+                if other_points and selected_points:
+                    np_other = np.asarray(other_points)
+                    np_selected = np.asarray(selected_points)
+                    dist, pt1, pt2 = shortest_distance(np_other, np_selected, False)
 
                     if dist is not None and dist < gap:
-                        try:
-                            did_snap_to_point = True
-                            dx = pt1.real - pt2.real
-                            dy = pt1.imag - pt2.imag
-                            move_to(dx, dy)
-                            # Get new value
-                            b = self.scene.context.elements._emphasized_bounds
-                        except (IndexError, TypeError, AttributeError):
-                            # Fallback: skip snapping if coordinate conversion fails
-                            pass
-
+                        did_snap_to_point = True
+                        dx = pt1.real - pt2.real
+                        dy = pt1.imag - pt2.imag
+                        move_to(dx, dy)
+                        # Get new value
+                        b = self.scene.context.elements._emphasized_bounds
                         # t3 = perf_counter()
                         # print (f"Snap, compared {len(selected_points)} pts to {len(other_points)} pts. Total time: {t3-t1:.2f}sec, Generation: {t2-t1:.2f}sec, shortest: {t3-t2:.2f}sec")
             if (
                 self.scene.context.snap_grid
-                and (not modifiers or "shift" not in modifiers)
+                and "shift" not in modifiers
                 and b is not None
                 and not did_snap_to_point
             ):
@@ -458,49 +376,28 @@ class RectSelectWidget(Widget):
                     ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2),
                 )
                 other_points = self.scene.pane.grid.grid_points
-                if (
-                    other_points
-                    and selected_points
-                    and len(other_points) + len(selected_points)
-                    <= MAX_POINTS_FOR_SNAPPING
-                ):
-                    try:
-                        np_other = np.asarray(other_points)
-                        np_selected = np.asarray(selected_points)
-                        dist, pt1, pt2 = shortest_distance(np_other, np_selected, True)
-                    except MemoryError:
-                        dist, pt1, pt2 = None, None, None
-
+                if other_points and selected_points:
+                    np_other = np.asarray(other_points)
+                    np_selected = np.asarray(selected_points)
+                    dist, pt1, pt2 = shortest_distance(np_other, np_selected, True)
                     if dist is not None and dist < gap:
-                        try:
-                            # did_snap_to_point = True
-                            dx = pt1[0] - pt2[0]
-                            dy = pt1[1] - pt2[1]
-                            move_to(dx, dy)
-                            # Get new value
-                            b = self.scene.context.elements._emphasized_bounds
-                        except (IndexError, TypeError, AttributeError):
-                            pass
+                        # did_snap_to_point = True
+                        dx = pt1[0] - pt2[0]
+                        dy = pt1[1] - pt2[1]
+                        move_to(dx, dy)
+                        # Get new value
+                        b = self.scene.context.elements._emphasized_bounds
 
                 # t2 = perf_counter()
                 # print (f"Corner-points, compared {len(selected_points)} pts to {len(other_points)} pts. Total time: {t2-t1:.2f}sec")
-
-            # Even then magnets win!
-            if not modifiers or "shift" not in modifiers:
+                # Even then magnets win!
                 dx, dy = self.scene.pane.revised_magnet_bound(b)
                 move_to(dx, dy)
 
         if modifiers is not None:
-            if self.modifiers != modifiers:
-                self.modifiers = modifiers
-                self._clear_status_cache()
-        else:
-            self.modifiers = []
+            self.modifiers = modifiers
 
         elements = self.scene.context.elements
-        if getattr(self.scene.pane, "active_tool", "none") != "none":
-            if event_type in ("leftdown", "leftup", "leftclick", "move", "hover"):
-                return RESPONSE_CHAIN
         if event_type == "leftdown":
             check_leftdown(space_pos)
             # print ("RectSelect consumed leftdown")
@@ -527,21 +424,13 @@ class RectSelectWidget(Widget):
             return RESPONSE_CONSUME
         return RESPONSE_DROP
 
-    def _clear_sector_cache(self):
-        """Clear the cached sector value when locations change."""
-        self._cached_sector = None
-
-    def _clear_status_cache(self):
-        """Clear the cached status message when modifiers or sector change."""
-        self._cached_status_msg = None
-
-    def _set_locations(self, start, end):
-        """Set start and end locations and clear cache."""
-        if self.start_location != start or self.end_location != end:
-            self.start_location = start
-            self.end_location = end
-            self._clear_sector_cache()
-            self._clear_status_cache()
+    def reset(self):
+        self.start_location = None
+        self.end_location = None
+        self.mode = "unclear"
+        self.mouse_down_time = 0
+        self.can_drag_move = False
+        self.scene.cursor("arrow")
 
     def draw_rectangle(self, gc, x0, y0, x1, y1, tcolor, tstyle):
         # Linux / Darwin do not recognize the GraphicsContext TransformationMatrix
@@ -558,7 +447,7 @@ class RectSelectWidget(Widget):
         try:
             self.selection_pen.SetWidth(linewidth)
         except TypeError:
-            self.selection_pen.SetWidth(linewidth)  # Already an int, no cast needed
+            self.selection_pen.SetWidth(int(linewidth))
         gc.SetPen(self.selection_pen)
         gc.StrokeLine(x0 * sx, y0 * sy, x1 * sx, y0 * sy)
         gc.StrokeLine(x1 * sx, y0 * sy, x1 * sx, y1 * sy)
@@ -582,7 +471,7 @@ class RectSelectWidget(Widget):
         try:
             self.selection_pen.SetWidth(linewidth)
         except TypeError:
-            self.selection_pen.SetWidth(linewidth)  # Already an int, no cast needed
+            self.selection_pen.SetWidth(int(linewidth))
         gc.SetPen(self.selection_pen)
         delta_X = 15.0 * self.magnification
         delta_Y = 15.0 * self.magnification
@@ -638,55 +527,64 @@ class RectSelectWidget(Widget):
 
     def process_draw(self, gc):
         """
-        Draw the selection rectangle with optimized status message caching.
+        Draw the selection rectangle
         """
         if (
-            self.mode != "select"
-            or self.start_location is None
-            or self.end_location is None
+            self.mode == "select"
+            and self.start_location is not None
+            and self.end_location is not None
         ):
-            return
+            self.selection_style[0][0] = self.scene.colors.color_selection1
+            self.selection_style[1][0] = self.scene.colors.color_selection2
+            self.selection_style[2][0] = self.scene.colors.color_selection3
+            x0 = self.start_location[0]
+            y0 = self.start_location[1]
+            x1 = self.end_location[0]
+            y1 = self.end_location[1]
+            sector = self.sector
 
-        self.selection_style[0][0] = self.scene.colors.color_selection1
-        self.selection_style[1][0] = self.scene.colors.color_selection2
-        self.selection_style[2][0] = self.scene.colors.color_selection3
+            _ = self.scene.context._
+            statusmsg = _(self.selection_style[self.selection_method[sector] - 1][2])
+            if "shift" in self.modifiers:
+                statusmsg += _(self.selection_text_shift)
+            elif "ctrl" in self.modifiers:
+                statusmsg += _(self.selection_text_control)
 
-        x0 = self.start_location[0]
-        y0 = self.start_location[1]
-        x1 = self.end_location[0]
-        y1 = self.end_location[1]
-        sector = self.sector
-
-        # Use cached status message
-        statusmsg = self._get_cached_status_message()
-        self.update_statusmsg(statusmsg)
-
-        gcstyle = self.selection_style[self.selection_method[sector] - 1][0]
-        gccolor = self.selection_style[self.selection_method[sector] - 1][1]
-        self.draw_rectangle(gc, x0, y0, x1, y1, gcstyle, gccolor)
-
-        # Draw indicators based on modifiers
-        if "shift" in self.modifiers:
-            self.draw_tiny_indicator(gc, "+", x0, y0, x1, y1, gcstyle, gccolor)
-        elif "ctrl" in self.modifiers:
-            self.draw_tiny_indicator(
+            self.update_statusmsg(statusmsg)
+            gcstyle = self.selection_style[self.selection_method[sector] - 1][0]
+            gccolor = self.selection_style[self.selection_method[sector] - 1][1]
+            self.draw_rectangle(
                 gc,
-                "^",
                 x0,
                 y0,
                 x1,
                 y1,
-                self.selection_style[self.selection_method[sector] - 1][0],
-                self.selection_style[self.selection_method[sector] - 1][1],
+                gcstyle,
+                gccolor,
             )
 
-    def reset(self):
-        """Reset all state and clear caches."""
-        self.start_location = None
-        self.end_location = None
-        self.mode = "unclear"
-        self.mouse_down_time = 0
-        self.can_drag_move = False
-        self.scene.cursor("arrow")
-        self._clear_sector_cache()
-        self._clear_status_cache()
+            # Determine Colour on selection mode: standard (from left top to right bottom) = Blue, else Green
+            # Draw indicator...
+            if "shift" in self.modifiers:
+                self.draw_tiny_indicator(
+                    gc,
+                    "+",
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    gcstyle,
+                    gccolor,
+                )
+
+            elif "ctrl" in self.modifiers:
+                self.draw_tiny_indicator(
+                    gc,
+                    "^",
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    self.selection_style[self.selection_method[sector] - 1][0],
+                    self.selection_style[self.selection_method[sector] - 1][1],
+                )

@@ -23,8 +23,8 @@ class CircleTool(ToolWidget):
     Adds Circle with click and drag.
     """
 
-    def __init__(self, scene, mode=None, **kwargs):
-        ToolWidget.__init__(self, scene, **kwargs)
+    def __init__(self, scene, mode=None):
+        ToolWidget.__init__(self, scene)
         self.start_position = None
         self.p1 = None
         self.p2 = None
@@ -158,11 +158,6 @@ class CircleTool(ToolWidget):
             response = RESPONSE_CONSUME
         elif event_type == "move":
             if self.p1 is not None:
-                if nearest_snap is not None:
-                    dist = abs(self.p1 - complex(nearest_snap[0], nearest_snap[1]))
-                    if dist == 0:
-                        nearest_snap = None
-
                 if nearest_snap is None:
                     self.p2 = complex(space_pos[0], space_pos[1])
                 else:
@@ -185,11 +180,6 @@ class CircleTool(ToolWidget):
                     self.scene.context.signal("statusmsg", "")
                     response = RESPONSE_ABORT
                     return response
-                if nearest_snap is not None:
-                    dist = abs(self.p1 - complex(nearest_snap[0], nearest_snap[1]))
-                    if dist == 0:
-                        nearest_snap = None
-
                 if nearest_snap is None:
                     self.p2 = complex(space_pos[0], space_pos[1])
                 else:
@@ -244,11 +234,7 @@ class CircleTool(ToolWidget):
                 pass
             self.end_tool()
             response = RESPONSE_ABORT
-        elif (
-            event_type == "lost"
-            or (event_type == "key_up" and modifiers == "escape")
-            or event_type == "rightdown"
-        ):
+        elif event_type == "lost" or (event_type == "key_up" and modifiers == "escape") or event_type == "rightdown":
             if self.scene.pane.tool_active:
                 response = RESPONSE_CONSUME
             else:

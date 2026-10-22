@@ -15,7 +15,6 @@ from meerk40t.gui.scene.sceneconst import (
     ORIENTATION_RELATIVE,
     ORIENTATION_VERTICAL,
     RESPONSE_CHAIN,
-    LAYER_LIVE,
 )
 from meerk40t.gui.zmatrix import ZMatrix
 from meerk40t.svgelements import Matrix
@@ -36,8 +35,6 @@ class Widget(list):
         bottom: float = None,
         all: bool = False,
         visible: bool = True,
-        layer: int = LAYER_LIVE,
-        **kwargs,
     ):
         """
         All produces a widget of infinite space rather than finite space.
@@ -49,7 +46,6 @@ class Widget(list):
         self.parent = None
         self.properties = ORIENTATION_RELATIVE
         self.visible = True
-        self.layer = layer 
         # If this property is set, then it won't be counted as topmost in the hitchain...
         self.transparent = False
         if all:

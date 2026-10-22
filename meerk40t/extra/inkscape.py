@@ -218,7 +218,7 @@ def plugin(kernel, lifecycle):
 
         @kernel.console_command(
             "load",
-            help="inkscape load : " + _("load the previous conversion"),
+            help=_("inkscape ... load  - load the previous conversion"),
             input_type="inkscape",
             output_type="inkscape",
         )
@@ -236,7 +236,7 @@ def plugin(kernel, lifecycle):
 
         @kernel.console_command(
             "simplify",
-            help="inkscape simplify : " + _("convert to plain svg"),
+            help=_("inkscape simplify  - convert to plain svg"),
             input_type="inkscape",
             output_type="inkscape",
         )
@@ -260,7 +260,7 @@ def plugin(kernel, lifecycle):
 
         @kernel.console_command(
             "text2path",
-            help="inkscape text2path : " + _("convert text objects to paths"),
+            help=_("inkscape text2path - convert text objects to paths"),
             input_type="inkscape",
             output_type="inkscape",
         )
@@ -288,7 +288,7 @@ def plugin(kernel, lifecycle):
         @kernel.console_option("step", "s", type=int, help=_("step to use"))
         @kernel.console_command(
             "makepng",
-            help="inkscape makepng : " + _("make a png of all elements"),
+            help=_("inkscape makepng   - make a png of all elements"),
             input_type="inkscape",
             output_type="inkscape",
         )
@@ -323,7 +323,7 @@ def plugin(kernel, lifecycle):
         )
         @kernel.console_command(
             "input",
-            help="inkscape input : " + _("provide the filename to process"),
+            help=_("input filename fn ... - provide the filename to process"),
             input_type="inkscape",
             output_type="inkscape",
         )
@@ -342,7 +342,7 @@ def plugin(kernel, lifecycle):
 
         @kernel.console_command(
             "version",
-            help="inkscape version : " + _("get the inkscape version"),
+            help=_("inkscape version   - get the inkscape version"),
             input_type="inkscape",
             output_type="inkscape",
         )
@@ -369,7 +369,7 @@ def plugin(kernel, lifecycle):
         )
         @kernel.console_command(
             "locate",
-            help="inkscape locate : " + _("set the path to inkscape on your computer"),
+            help=_("inkscape locate    - set the path to inkscape on your computer"),
             input_type="inkscape",
             output_type="inkscape",
         )

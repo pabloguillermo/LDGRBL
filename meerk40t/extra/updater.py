@@ -3,7 +3,6 @@ The code inside this module provides routines to look for newer versions of meer
 """
 import http.client
 import json
-import os
 import platform
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -11,16 +10,6 @@ from urllib.request import Request, urlopen
 
 def plugin(kernel, lifecycle):
     if lifecycle == "register":
-        if os.environ.get("MEERK40T_DISABLE_UPDATER"):
-            # Updater disabled via environment — used by the flatpak build,
-            # whose install path is read-only and where updates are managed
-            # externally via `flatpak update`. Register the two settings the
-            # GUI reads so wxmmain.update_check_at_startup short-circuits
-            # cleanly, then bail without wiring up the preferences page or
-            # the check_for_updates console command.
-            kernel.root.setting(int, "update_check", 0)
-            kernel.root.setting(int, "update_frequency", 1)
-            return
         _ = kernel.translation
         choices = [
             {
@@ -144,7 +133,7 @@ def plugin(kernel, lifecycle):
                         src = True
                     elif "src" in ending:
                         src = True
-            
+
                     result = list(map(int, version.split(".")))
                     if len(result) > 3:
                         result = result[0:2]
@@ -161,11 +150,7 @@ def plugin(kernel, lifecycle):
             def extract_from_json(response):
                 # print (response)
                 tag = response["tag_name"]
-                try:
-                    version = comparable_version(tag)
-                except Exception as e:
-                    print(f"Error parsing version from tag '{tag}': {e}")
-                    return None, None, None, None, None, None
+                version = comparable_version(tag)
                 if response["prerelease"]:
                     version[3] = True
                 url = response["html_url"]
@@ -354,9 +339,6 @@ def plugin(kernel, lifecycle):
                         for resp in response:
                             if resp["draft"]:
                                 continue
-                            if resp["tag_name"].lower().startswith("weekly"):
-                                # print(f"Found weekly build: {resp['tag_name']}")
-                                continue
                             (
                                 tag,
                                 version,
@@ -365,9 +347,6 @@ def plugin(kernel, lifecycle):
                                 assets,
                                 rel_info,
                             ) = extract_from_json(resp)
-                            if tag is None:
-                                continue
-
                             # What is the newest beta
                             if resp["prerelease"]:
                                 if newer_version(

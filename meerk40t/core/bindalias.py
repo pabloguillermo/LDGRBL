@@ -109,9 +109,6 @@ DEFAULT_KEYMAP = {
         "tree emphasized delete",
         "element delete",
     ),
-    "numpad_delete": (
-        "tree selected delete",
-    ),
     "escape": (
         "",
         "pause",
@@ -271,7 +268,6 @@ DEFAULT_ALIAS = {
     "+up": (".timerup 0 0.1 up 1mm",),
     "+down": (".timerdown 0 0.1 down 1mm",),
     "burn": ("planz clear copy preprocess validate blob preopt optimize spool",),
-    "simulate": ("planz clear copy preprocess validate blob preopt optimize finish\nwindow open Simulation",),
     "-scale_up": (".timerscale_up off",),
     "-scale_down": (".timerscale_down off",),
     "-rotate_cw": (".timerrotate_cw off",),
@@ -306,7 +302,7 @@ class Bind(Service):
 
         _ = self._
 
-        @self.console_command("bind", help="bind <key> <console command> - " + _("Binds a key to a given keyboard keystroke"))
+        @self.console_command("bind", help=_("bind <key> <console command>"))
         def bind(command, channel, _, args=tuple(), **kwgs):
             """
             Binds a key to a given keyboard keystroke.
@@ -447,7 +443,7 @@ class Alias(Service):
 
         @self.console_argument("alias", type=str, help=_("alias command"))
         @self.console_command(
-            "alias", help="alias <alias> <console commands[;console command]*> - " + _("Sets or shows command aliases"),
+            "alias", help=_("alias <alias> <console commands[;console command]*>")
         )
         def alias_command(command, channel, _, alias=None, remainder=None, **kwgs):
             _ = self._

@@ -1,16 +1,17 @@
 import os
 import unittest
+
 from test import bootstrap
 
 gcode_rect = """G90
 G94
 G21
 M4
-G0 X19.990 Y215.011 S0 F600
-G1 X29.997 Y215.011 S1000 F900
+G0 X19.990 Y205.003 S0.0 F600.0
+G1 X19.990 Y215.011 S1000.0 F900.0
+G1 X29.997 Y215.011
 G1 X29.997 Y205.003
 G1 X19.990 Y205.003
-G1 X19.990 Y215.011
 G1 S0
 M5
 """
@@ -19,11 +20,11 @@ gcode_rect_rotary = """G90
 G94
 G21
 M4
-G0 X19.990 Y429.997 S0 F600
-G1 X29.997 Y429.997 S1000 F900
+G0 X19.990 Y410.007 S0.0 F600.0
+G1 X19.990 Y429.997 S1000.0 F900.0
+G1 X29.997 Y429.997
 G1 X29.997 Y410.007
 G1 X19.990 Y410.007
-G1 X19.990 Y429.997
 G1 S0
 M5
 """
@@ -137,8 +138,6 @@ class TestDriverGRBLRotary(unittest.TestCase):
             device = kernel.device
             rotary_path = device.path
             device(f"set -p {rotary_path} rotary_active True")
-            device(f"set -p {rotary_path} rotary_auto_wrap_scale False")
-            device(f"set -p {rotary_path} rotary_steps_compensate False")
             device(f"set -p {rotary_path} rotary_scale_y 2.0")
             device.signal("rotary_active", True)
             kernel.device.rotary.realize()  # In case signal doesn't update the device settings quickly enough.

@@ -19,7 +19,6 @@ class SeekbarWidget(Widget):
         value_max,
         changed,
         clicked=None,
-        **kwargs,
     ):
         size = scene.cell() / 2
         Widget.__init__(
@@ -29,7 +28,6 @@ class SeekbarWidget(Widget):
             min(start_y, end_y) - size,
             max(start_x, end_x) + size,
             max(start_y, end_y) + size,
-            **kwargs,
         )
         self.start_x = start_x
         self.start_y = start_y

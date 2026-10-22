@@ -182,14 +182,6 @@ class TextVariables(wx.Panel):
 
 
 class TextPropertyPanel(ScrolledPanel):
-    """TextPropertyPanel - User interface panel for laser cutting operations
-    Technical Purpose:
-    Provides user interface controls for textproperty functionality. Features checkbox controls for user interaction. Integrates with refresh_scene for enhanced functionality.
-    End-User Perspective:
-    This panel provides controls for textproperty functionality. Key controls include "Translate Variables" (checkbox)."""
-
-    """TextPropertyPanel - User interface panel for laser cutting operations"""
-
     def __init__(self, parent, *args, context=None, node=None, **kwds):
         kwds["style"] = kwds.get("style", 0) | wx.TAB_TRAVERSAL
         super().__init__(parent, *args, **kwds)
@@ -217,11 +209,10 @@ class TextPropertyPanel(ScrolledPanel):
             )
         )
         self.button_choose_font = wxBitmapButton(
-            self,
-            wx.ID_ANY,
+            self, wx.ID_ANY,
             icons8_choose_font.GetBitmap(
                 resize=STD_ICON_SIZE * self.context.root.bitmap_correction_scale / 2
-            ),
+            )
         )
         self.panel_id = IdPanel(
             self, id=wx.ID_ANY, context=self.context, node=self.node
@@ -507,13 +498,7 @@ class TextPropertyPanel(ScrolledPanel):
             page_fonthistory.Layout()
 
         page_fonthistory.Bind(wx.EVT_SIZE, on_size_fh)
-        for panel in (
-            page_main,
-            page_variables,
-            page_fonthistory,
-            page_extended,
-        ):
-            panel.Reparent(self.notebook)
+
         self.notebook.AddPage(page_main, _("Colors"))
         self.notebook.AddPage(page_variables, _("Text-Variables"))
         self.notebook.AddPage(page_fonthistory, _("Font-History"))
@@ -588,7 +573,7 @@ class TextPropertyPanel(ScrolledPanel):
         self.renderer.measure_text(self.node)
         bb = self.node.bounds
         self.context.elements.signal("element_property_reload", self.node)
-        self.context.elements.refresh_signal(just_emphasized=True)
+        self.context.signal("refresh_scene", "Scene")
 
     def on_button_smaller(self, event):
         try:

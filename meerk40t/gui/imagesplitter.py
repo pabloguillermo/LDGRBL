@@ -151,12 +151,6 @@ class InfoPanel(wx.Panel):
 
 
 class SplitterPanel(wx.Panel):
-    """SplitterPanel - User interface panel for laser cutting operations
-    **Technical Purpose:**
-    Provides user interface controls for splitter functionality. Features button controls for user interaction. Integrates with emphasized, reference for enhanced functionality.
-    **End-User Perspective:**
-    This panel provides controls for splitter functionality. Key controls include "Create split images" (button), "Create keyhole image" (button)."""
-
     def __init__(self, *args, context=None, scene=None, **kwds):
         kwds["style"] = kwds.get("style", 0)
         wx.Panel.__init__(self, *args, **kwds)
@@ -309,12 +303,6 @@ class SplitterPanel(wx.Panel):
 
 
 class KeyholePanel(wx.Panel):
-    """KeyholePanel - User interface panel for laser cutting operations
-    **Technical Purpose:**
-    Provides user interface controls for keyhole functionality. Features button controls for user interaction. Integrates with emphasized, reference for enhanced functionality.
-    **End-User Perspective:**
-    This panel provides controls for keyhole functionality. Key controls include "Create split images" (button), "Create keyhole image" (button)."""
-
     def __init__(self, *args, context=None, scene=None, **kwds):
         kwds["style"] = kwds.get("style", 0)
         wx.Panel.__init__(self, *args, **kwds)
@@ -509,11 +497,6 @@ class RenderSplit(MWindow):
         self.panel_keyhole = KeyholePanel(
             self, wx.ID_ANY, context=self.context, scene=self.scene
         )
-        for panel in (
-            self.panel_split,
-            self.panel_keyhole
-        ):
-            panel.Reparent(self.notebook_main)
         self.notebook_main.AddPage(self.panel_split, _("Render + Split"))
         self.notebook_main.AddPage(self.panel_keyhole, _("Keyhole operation"))
 

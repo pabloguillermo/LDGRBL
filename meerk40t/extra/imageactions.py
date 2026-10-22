@@ -116,8 +116,7 @@ def split_image(elements, image, matrix, bounds, dpi, cols, rows):
     data_out = []
     context = elements.elem_branch
     if cols != 1 or rows != 1:
-        with elements.node_lock:
-            context = elements.elem_branch.add(type="group", label="Splitted Images")
+        context = elements.elem_branch.add(type="group", label="Splitted Images")
         data_out.append(context)
 
     imgwidth, imgheight = image.size
@@ -128,32 +127,31 @@ def split_image(elements, image, matrix, bounds, dpi, cols, rows):
     offset_y = bounds[1]
     deltax_bound = (bounds[2] - bounds[0]) / cols
     deltay_bound = (bounds[3] - bounds[1]) / rows
-    with elements.node_lock:
-        for yidx in range(rows):
-            startx = 0
-            offset_x = bounds[0]
-            endy = starty + deltay_image - 1
-            if yidx == rows - 1:
+    for yidx in range(rows):
+        startx = 0
+        offset_x = bounds[0]
+        endy = starty + deltay_image - 1
+        if yidx == rows - 1:
+            # Just to make sure we get the residual pixels
+            endy = imgheight - 1
+        for xidx in range(cols):
+            endx = startx + deltax_image - 1
+            if xidx == cols - 1:
                 # Just to make sure we get the residual pixels
-                endy = imgheight - 1
-            for xidx in range(cols):
-                endx = startx + deltax_image - 1
-                if xidx == cols - 1:
-                    # Just to make sure we get the residual pixels
-                    endx = imgwidth - 1
-                tile = image.crop((startx, starty, endx, endy))
-                tilematrix = copy(matrix)
-                tilematrix.post_translate(offset_x, offset_y)
+                endx = imgwidth - 1
+            tile = image.crop((startx, starty, endx, endy))
+            tilematrix = copy(matrix)
+            tilematrix.post_translate(offset_x, offset_y)
 
-                image_node = context.add(
-                    type="elem image", image=tile, matrix=tilematrix, dpi=dpi
-                )
-                data_out.append(image_node)
+            image_node = context.add(
+                type="elem image", image=tile, matrix=tilematrix, dpi=dpi
+            )
+            data_out.append(image_node)
 
-                startx = endx + 1
-                offset_x += deltax_bound
-            starty = endy + 1
-            offset_y += deltay_bound
+            startx = endx + 1
+            offset_x += deltax_bound
+        starty = endy + 1
+        offset_y += deltay_bound
     return data_out
 
 
@@ -172,7 +170,9 @@ def plugin(kernel, lifecycle):
     )
     @kernel.console_command(
         "render_split",
-        help="render_split <columns> <rows> <dpi> : " + _("Render selected elements and split the image into multiple parts"),
+        help=_("render_split <columns> <rows> <dpi>")
+        + "\n"
+        + _("Render selected elements and split the image into multiple parts"),
         input_type=(None, "elements"),
         output_type="elements",
     )
@@ -313,9 +313,8 @@ def plugin(kernel, lifecycle):
         data_out = mask_image(
             elemimage, maskimage, elemmatrix, dpi, total_bounds[0], total_bounds[1]
         )
-        with elements.node_lock:
-            for imnode in data_out:
-                elements.elem_branch.add_node(imnode)
+        for imnode in data_out:
+            elements.elem_branch.add_node(imnode)
         # Newly created! Classification needed?
         post.append(classify_new(data_out))
         elements.signal("element_added", data_out)

@@ -7,9 +7,9 @@ from usb.core import NoBackendError
 
 from meerk40t.balormk.driver import BalorDriver
 from meerk40t.balormk.livelightjob import LiveLightJob
-from meerk40t.core.geomstr import Geomstr
 from meerk40t.core.laserjob import LaserJob
 from meerk40t.kernel import CommandSyntaxError
+from meerk40t.tools.geomstr import Geomstr
 
 
 def plugin(service, lifecycle):
@@ -82,32 +82,23 @@ def plugin(service, lifecycle):
             service.job.set_travel_speed(simulation_speed)
         service.spooler.send(service.job)
 
-    def run_light_job(service, mode, toggle=False):
-        if service.job is not None:
-            if isinstance(service.job, LiveLightJob):
-                service.job.stop()
-                service.job = None
-                if toggle:
-                    return
-        service.job = LiveLightJob(service, mode=mode)
-        service.spooler.send(service.job)
-
-    @service.console_option(
-        "toggle", "t", type=bool, action="store_true", help="Toggle hull light mode"
-    )
     @service.console_command("select-light", help=_("Execute selection light idle job"))
     def select_light(**kwargs):
         """
         Start a live bounds job.
         """
-        run_light_job(service, "bounds", toggle=kwargs.get("toggle", False))
+        # Live Bounds Job.
+        if service.job is not None:
+            service.job.stop()
+        service.job = LiveLightJob(service, mode="bounds")
+        service.spooler.send(service.job)
 
-    @service.console_option(
-        "toggle", "t", type=bool, action="store_true", help="Toggle hull light mode"
-    )
     @service.console_command("full-light", help=_("Execute full light idle job"))
     def full_light(**kwargs):
-        run_light_job(service, "full", toggle=kwargs.get("toggle", False))
+        if service.job is not None:
+            service.job.stop()
+        service.job = LiveLightJob(service)
+        service.spooler.send(service.job)
 
     # @service.console_command(
     #     "regmark-light", help=_("Execute regmark live light idle job")
@@ -118,12 +109,12 @@ def plugin(service, lifecycle):
     #     service.job = LiveLightJob(service, mode="regmarks")
     #     service.spooler.send(service.job)
 
-    @service.console_option(
-        "toggle", "t", type=bool, action="store_true", help="Toggle hull light mode"
-    )
     @service.console_command("hull-light", help=_("Execute convex hull light idle job"))
     def hull_light(**kwargs):
-        run_light_job(service, "hull", toggle=kwargs.get("toggle", False))
+        if service.job is not None:
+            service.job.stop()
+        service.job = LiveLightJob(service, mode="hull")
+        service.spooler.send(service.job)
 
     @service.console_command(
         "stop",
@@ -312,7 +303,7 @@ def plugin(service, lifecycle):
     @service.console_argument("time", type=float, help=_("laser fire pulse duration"))
     @service.console_command(
         "pulse",
-        help="pulse <time> : " + _("Pulse the laser in place."),
+        help=_("pulse <time>: Pulse the laser in place."),
     )
     def pulse(
         command, channel, _, time=None, power=None, idonotlovemyhouse=False, **kwargs
@@ -363,7 +354,7 @@ def plugin(service, lifecycle):
 
     @service.console_command(
         "usb_disconnect",
-        help=_("disconnect usb"),
+        help=_("connect usb"),
     )
     def usb_disconnect(command, channel, _, data=None, remainder=None, **kwgs):
         service.spooler.command("disconnect", priority=1)
@@ -839,40 +830,17 @@ def plugin(service, lifecycle):
             channel(f"Bit {index}: 0x{b:04x} 0b{b:016b}")
 
     @service.console_command(
-        ("lstatus", "liststatus"),
+        "lstatus",
         help=_("Checks the list status."),
     )
     def galvo_liststatus(command, channel, _, remainder=None, **kwgs):
         reply = service.driver.connection.get_list_status()
         if reply is None:
-            channel("Not connected, cannot get list status.")
+            channel("Not connected, cannot get serial number.")
             return
         channel(f"Command replied: {reply}")
         for index, b in enumerate(reply):
-            channel(f"Word {index}: 0x{b:04x} 0b{b:016b}")
-        # Interpret some values
-        status_info = reply[3] if len(reply) > 3 else 0
-        # Known examples for word 3:
-        # Idle  : 0x0220 0b0000001000100000
-        # Running: 0x0224 0b0000001000100100
-        # Paused : 0x0228 0b0000001000101000
-        # channel(f"Status word (word 3): 0x{status_info:04x} 0b{status_info:016b}")
-        # Bit definitions (word 3):
-        #   0x0004 (bit 2) -> Running state indicator
-        #   0x0008 (bit 3) -> Paused state indicator
-        is_running_state = bool(status_info & 0x0004)
-        is_paused_state = bool(status_info & 0x0008)
-        if is_paused_state:
-            exec_state = "Paused"
-        elif is_running_state:
-            exec_state = "Running"
-        else:
-            exec_state = "Idle"
-        channel(f"Execution state: {exec_state}")
-        channel(f"List Running: {'Yes' if (reply[2] & 0x0001) else 'No'}")
-        # Also show individual bit statuses for clarity
-        channel(f" - Running bit (0x0004): {'Set' if is_running_state else 'Clear'}")
-        channel(f" - Paused  bit (0x0008): {'Set' if is_paused_state else 'Clear'}")
+            channel(f"Bit {index}: 0x{b:04x} 0b{b:016b}")
 
     @service.console_command(
         "mark_time",

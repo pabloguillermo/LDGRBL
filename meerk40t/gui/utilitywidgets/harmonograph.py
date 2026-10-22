@@ -151,11 +151,11 @@ class HShape:
 
 
 class HarmonographWidget(Widget):
-    def __init__(self, scene, **kwargs):
+    def __init__(self, scene):
         bed_width = scene.context.space.display.unit_width
         bed_height = scene.context.space.display.unit_height
         x, y = bed_width / 2, bed_height / 2
-        super().__init__(scene, x, y, x, y, **kwargs)
+        super().__init__(scene, x, y, x, y)
         self.tool_pen = wx.Pen()
         self.tool_pen.SetColour(wx.BLUE)
         self.shape_matrix = None
@@ -440,8 +440,8 @@ class CurveWidget(OpenCloseWidget):
 
 
 class ControlWidget(Widget):
-    def __init__(self, scene, **kwargs):
-        super().__init__(scene, 0, 0, 10000, 10000, **kwargs)
+    def __init__(self, scene):
+        super().__init__(scene, 0, 0, 10000, 10000)
 
     def process_draw(self, gc: wx.GraphicsContext):
         gc.SetBrush(wx.RED_BRUSH)

@@ -35,11 +35,9 @@ _ = wx.GetTranslation
 
 
 class TipPanel(wx.Panel):
-    """TipPanel - User interface panel for laser cutting operations
-    **Technical Purpose:**
-    Provides user interface controls for tip functionality. Features text control, button controls for user interaction.
-    **End-User Perspective:**
-    This panel provides controls for tip functionality. Key controls include "Image missing!" (text control), "Previous tip" (button), "Next tip" (button)."""
+    """
+    Display MeerK40t usage tips
+    """
 
     def __init__(self, *args, context=None, **kwds):
         # begin wxGlade: PositionPanel.__init__
@@ -335,9 +333,6 @@ class TipPanel(wx.Panel):
     def on_check_startup(self, event):
         state = self.check_startup.GetValue()
         self.context.show_tips = state
-        # Persist into the kernel config dict immediately so shutdown save includes it
-        # (assigning the attribute alone can miss a flush snapshot for this context).
-        self.context.write_persistent("show_tips", state)
 
     def on_tip_prev(self, event):
         self.current_tip -= 1

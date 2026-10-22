@@ -28,7 +28,6 @@ from ..gui.wxutils import (
     wxRadioBox,
     wxStaticBitmap,
     wxStaticText,
-    dispatch_to_main_thread,
 )
 from ..kernel import signal_listener
 from .icons import STD_ICON_SIZE, get_default_icon_size, icons8_arrange
@@ -198,12 +197,6 @@ class InfoPanel(wx.Panel):
 
 
 class AlignmentPanel(wx.Panel):
-    """Alignment Panel - Align and distribute design elements
-    **Technical Purpose:**
-    Provides alignment and distribution controls for design elements. Features checkbox controls for user interaction. Integrates with emphasized, reference for enhanced functionality.
-    **End-User Perspective:**
-    This panel helps you align and distribute design elements. Use it to create evenly spaced objects or align them to specific positions."""
-
     def __init__(self, *args, context=None, scene=None, **kwds):
         kwds["style"] = kwds.get("style", 0)
         wx.Panel.__init__(self, *args, **kwds)
@@ -409,12 +402,6 @@ class AlignmentPanel(wx.Panel):
 
 
 class DistributionPanel(wx.Panel):
-    """DistributionPanel - User interface panel for laser cutting operations
-    **Technical Purpose:**
-    Provides user interface controls for distribution functionality. Features checkbox controls for user interaction. Integrates with emphasized, reference for enhanced functionality.
-    **End-User Perspective:**
-    This panel provides controls for distribution functionality. Key controls include "Rotate" (checkbox), "Rotate" (checkbox), "Same width" (checkbox)."""
-
     def __init__(self, *args, context=None, scene=None, **kwds):
         kwds["style"] = kwds.get("style", 0)
         wx.Panel.__init__(self, *args, **kwds)
@@ -1122,12 +1109,6 @@ class DistributionPanel(wx.Panel):
 
 
 class ArrangementPanel(wx.Panel):
-    """ArrangementPanel - User interface panel for laser cutting operations
-    **Technical Purpose:**
-    Provides user interface controls for arrangement functionality. Features checkbox controls for user interaction. Integrates with emphasized, reference for enhanced functionality.
-    **End-User Perspective:**
-    This panel provides controls for arrangement functionality. Key controls include "Rotate" (checkbox), "Rotate" (checkbox), "Same width" (checkbox)."""
-
     def __init__(self, *args, context=None, scene=None, **kwds):
         kwds["style"] = kwds.get("style", 0)
         wx.Panel.__init__(self, *args, **kwds)
@@ -1598,17 +1579,14 @@ class Alignment(MWindow):
         self.panel_align = AlignmentPanel(
             self, wx.ID_ANY, context=self.context, scene=self.scene
         )
-        self.panel_align.Reparent(self.notebook_main)
         self.notebook_main.AddPage(self.panel_align, _("Align"))
         self.panel_distribution = DistributionPanel(
             self, wx.ID_ANY, context=self.context, scene=self.scene
         )
-        self.panel_distribution.Reparent(self.notebook_main)
         self.notebook_main.AddPage(self.panel_distribution, _("Distribute"))
         self.panel_arrange = ArrangementPanel(
             self, wx.ID_ANY, context=self.context, scene=self.scene
         )
-        self.panel_arrange.Reparent(self.notebook_main)
         self.notebook_main.AddPage(self.panel_arrange, _("Arrange"))
         self.sizer.Add(self.notebook_main, 1, wx.EXPAND, 0)
         self.Layout()
@@ -1626,8 +1604,7 @@ class Alignment(MWindow):
 
     @signal_listener("reference")
     @signal_listener("emphasized")
-    @dispatch_to_main_thread
-    def on_emphasize_signal(self, origin, *args, **kwargs):
+    def on_emphasize_signal(self, origin, *args):
         has_emph = self.context.elements.has_emphasis()
         self.panel_align.show_stuff(has_emph)
         self.panel_distribution.show_stuff(has_emph)

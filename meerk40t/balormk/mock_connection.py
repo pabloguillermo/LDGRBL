@@ -10,8 +10,7 @@ import struct
 
 
 class MockConnection:
-    def __init__(self, channel, device=None):
-        self.parent_device = device
+    def __init__(self, channel):
         self.channel = channel
         self.send = None
         self.recv = None
@@ -41,14 +40,14 @@ class MockConnection:
     def close(self, index=0):
         """Closes device."""
         _ = self.channel._
-        device = self.devices.get(index)
+        device = self.devices[index]
         self.channel(_("Attempting disconnection from Mock."))
         if device is not None:
             self.channel(_("Mock Disconnection Successful.\n"))
             del self.devices[index]
 
     def write(self, index=0, packet=None):
-        from meerk40t.balormk.controller import GetSerialNo, ReadPort
+        from meerk40t.balormk.controller import GetSerialNo
 
         packet_length = len(packet)
         assert packet_length == 0xC or packet_length == 0xC00
@@ -59,41 +58,11 @@ class MockConnection:
             b = packet[0]
             if b == GetSerialNo:
                 self.set_implied_response("meerk40t")
-            elif b == ReadPort:
-                # Mock port bits: return 0x0000 (no bits set)
-                # Special case: set bits for keyboard states
-                if self.parent_device is None:
-                    footpedal_pin = 15  # Default to pin 15 if no device
-                else:
-                    footpedal_pin = getattr(
-                        self.parent_device, "footpedal_pin", 15
-                    )  # Default to pin 15 if not set
-                pinvalue = 0
-                try:
-                    import wx
-
-                    if wx.GetKeyState(wx.WXK_CAPITAL):
-                        pinvalue |= 1 << footpedal_pin  # Caps Lock for foot pedal
-                    if wx.GetKeyState(wx.WXK_CONTROL):
-                        pinvalue |= 1 << 0  # Ctrl at bit 0
-                    if wx.GetKeyState(wx.WXK_SHIFT):
-                        pinvalue |= 1 << 1  # Shift at bit 1
-                    if wx.GetKeyState(wx.WXK_ALT):
-                        pinvalue |= 1 << 2  # Alt at bit 2
-                except ImportError:
-                    # Shrug, that console operation then,
-                    # and we dont care about showing some bogus debug information
-                    pass
-                self.set_implied_response(
-                    b"\x00\x00" + struct.pack("<H", pinvalue) + b"\x00\x00\x00\x00"
-                )
             if self.send:
                 if packet_length == 0xC:
-                    rc = self._parse_single(packet)
+                    self.send(self._parse_single(packet))
                 else:
-                    rc = self._parse_list(packet)
-
-                self.send(rc)
+                    self.send(self._parse_list(packet))
 
     def _parse_list(self, packet):
         commands = []

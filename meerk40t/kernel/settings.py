@@ -20,13 +20,7 @@ class Settings:
     `write_configuration` is called.
     """
 
-    def __init__(
-        self,
-        directory: Optional[str],
-        filename: str,
-        ignore_settings: bool = False,
-        create_backup: bool = False,
-    ) -> None:
+    def __init__(self, directory, filename, ignore_settings=False, create_backup=False):
         if directory:
             self._config_file = Path(get_safe_path(directory, create=True)).joinpath(
                 filename
@@ -39,10 +33,10 @@ class Settings:
         if not ignore_settings:
             self.read_configuration()
 
-    def __contains__(self, item: str) -> bool:
+    def __contains__(self, item):
         return item in self._config_dict
 
-    def read_configuration(self, targetfile: Optional[Union[str, Path]] = None) -> None:
+    def read_configuration(self, targetfile=None):
         """
         Read configuration reads the self._config_file to get the parsed config file data.
 
@@ -64,7 +58,7 @@ class Settings:
             FileNotFoundError,
         ):
             return
-        except UnicodeDecodeError:
+        except UnicodeDecodeError as e:
             print(
                 "The config file contained unsupported characters, please share the file with the dev team"
             )
@@ -87,48 +81,17 @@ class Settings:
                         f"We had an error in the config, section {section}.{option}, try to recover from {e}"
                     )
 
-    def write_configuration(
-        self, targetfile: Optional[Union[str, Path]] = None
-    ) -> None:
+    def write_configuration(self, targetfile=None):
         """
         Write configuration writes the config file to disk. This is typically done during the shutdown process.
 
         This uses the python ConfigParser to save data from the _config_dict.
         @return:
         """
-
-        def create_backup_if_needed(targetfile: str) -> None:
-            if not self.create_backup:
-                return
-            VERSIONS = 5
-            try:
-                if os.path.exists(targetfile):
-                    base_name, _ = os.path.splitext(targetfile)
-                    for history in range(VERSIONS - 1, -1, -1):
-                        v0 = ".bak" if history == 0 else f".ba{history}"
-                        v1 = f".ba{history + 1}"
-                        v0_file = f"{base_name}{v0}"
-                        v1_file = f"{base_name}{v1}"
-                        if os.path.exists(v0_file):
-                            if os.path.exists(v1_file):
-                                os.remove(v1_file)
-                            os.rename(v0_file, v1_file)
-
-                    v1_file = f"{base_name}.bak"
-                    os.rename(targetfile, v1_file)
-            except (
-                PermissionError,
-                OSError,
-                RuntimeError,
-                FileExistsError,
-                FileNotFoundError,
-            ):
-                # print (f"Error happened: {e}")
-                pass
-
         if self.prevent_persisting:
             return
-        target: str = str(self._config_file) if targetfile is None else str(targetfile)
+        if targetfile is None:
+            targetfile = self._config_file
         try:
             parser = configparser.ConfigParser()
             for section_key in self._config_dict:
@@ -149,21 +112,50 @@ class Settings:
                         print(
                             f"We had a duplication error in the config, try to recover from {e}"
                         )
-            create_backup_if_needed(target)
-            with open(target, "w", encoding="utf-8") as fp:
+
+            if self.create_backup:
+                VERSIONS = 5
+                try:
+                    if os.path.exists(targetfile):
+                        base_name, base_ext = os.path.splitext(targetfile)
+                        for history in range(VERSIONS - 1, -1, -1):
+                            if history == 0:
+                                v0 = ".bak"
+                            else:
+                                v0 = f".ba{history}"
+                            v1 = f".ba{history + 1}"
+                            v0_file = base_name + v0
+                            v1_file = base_name + v1
+                            if os.path.exists(v0_file):
+                                if os.path.exists(v1_file):
+                                    os.remove(v1_file)
+                                os.rename(v0_file, v1_file)
+
+                        v1_file = base_name + ".bak"
+                        os.rename(targetfile, v1_file)
+                except (
+                    PermissionError,
+                    OSError,
+                    RuntimeError,
+                    FileExistsError,
+                    FileNotFoundError,
+                ):
+                    # print (f"Error happened: {e}")
+                    pass
+            with open(targetfile, "w", encoding="utf-8") as fp:
                 parser.write(fp)
         except (PermissionError, FileNotFoundError, OSError, RuntimeError):
             return
 
-    def literal_dict(self) -> Dict[str, Dict[str, Any]]:
-        literal_dict = {}
+    def literal_dict(self):
+        literal_dict = dict()
         import warnings
 
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             for section in self._config_dict:
                 section_dict = self._config_dict[section]
-                literal_section_dict = {}
+                literal_section_dict = dict()
                 literal_dict[section] = literal_section_dict
                 for key in section_dict:
                     value = section_dict[key]
@@ -175,10 +167,10 @@ class Settings:
 
         return literal_dict
 
-    def set_dict(self, literal_dict: Dict[str, Dict[str, Any]]) -> None:
+    def set_dict(self, literal_dict):
         self._config_dict.clear()
         for section in literal_dict:
-            section_dict = {}
+            section_dict = dict()
             self._config_dict[section] = section_dict
             for key in literal_dict[section]:
                 section_dict[key] = str(literal_dict[section][key])
@@ -188,7 +180,7 @@ class Settings:
         t: type,
         section: str,
         key: str,
-        default: Union[str, int, float, bool, list, tuple, None] = None,
+        default: Union[str, int, float, bool, list, tuple] = None,
     ) -> Any:
         """
         Directly read from persistent storage the value of an item.
@@ -221,87 +213,22 @@ class Settings:
                 "Something is attempting to load a persistent setting after kernel is terminated."
             ) from e
 
-    def read_persistent_attributes(self, section: str, obj: Any) -> None:
+    def read_persistent_attributes(self, section: str, obj: Any):
         """
         Reads persistent settings for any value found set on the object so long as the object type is int, float, str
         or bool.
-
-        This method is conservative: when an instance attribute shadows a class-level
-        descriptor (like a property or method), prefer to interact with the descriptor
-        safely rather than blindly overwriting it in the instance dictionary. For
-        properties with setters we attempt to set via `setattr()` so the setter logic
-        runs; for callables (methods) we skip overwriting.
 
         @param section:
         @param obj:
         @return:
         """
-        # Remove persisted entries that would try to overwrite class-level
-        # read-only properties or callables (methods). These entries are
-        # dangerous to retain and should be removed proactively.
-        for possible in list(self.keylist(section)):
-            cls_attr = getattr(type(obj), possible, None)
-            if cls_attr is not None:
-                if isinstance(cls_attr, property) and getattr(cls_attr, 'fset', None) is None:
-                    try:
-                        del self._config_dict[section][possible]
-                        # silent: key removed to avoid shadowing read-only property
-                    except Exception:
-                        pass
-                    continue
-                if callable(cls_attr):
-                    try:
-                        del self._config_dict[section][possible]
-                        # silent: key removed to avoid shadowing callable
-                    except Exception:
-                        pass
-                    continue
-
-        for key, value in list(obj.__dict__.items()):
+        for key, value in obj.__dict__.items():
             if key.startswith("_"):
                 continue
-            # If the existing instance attribute is callable (e.g. a method stored in
-            # the instance dict) we do not attempt to read/assign a persisted value
-            # for it — that could lead to trying to coerce strings via a function
-            # call and cause errors (see tests). Also remove the persisted key.
-            if callable(value):
-                try:
-                    del self._config_dict[section][key]
-                    # silent: removed persisted key because an instance callable exists
-                except Exception:
-                    pass
-                continue
-
             t = type(value) if value is not None else str
             read_value = self.read_persistent(t, section, key)
             if read_value is None:
                 continue
-
-            # If the class defines an attribute with this name, be conservative:
-            # - if it's a property, try to set via setattr (invokes setter)
-            # - if it's callable (method, function), skip assignment
-            cls_attr = getattr(type(obj), key, None)
-            if cls_attr is not None:
-                if isinstance(cls_attr, property):
-                    try:
-                        setattr(obj, key, read_value)
-                    except AttributeError:
-                        # read-only property; remove persisted key to avoid future issues
-                        try:
-                            del self._config_dict[section][key]
-                            # silent: removed persisted key to avoid shadowing read-only property
-                        except Exception:
-                            pass
-                        pass
-                    continue
-                if callable(cls_attr):
-                    # Don't overwrite methods; remove persisted key
-                    try:
-                        del self._config_dict[section][key]
-                        # silent: removed persisted key to avoid shadowing callable
-                    except Exception:
-                        pass
-                    continue
             try:
                 setattr(obj, key, read_value)
             except AttributeError:
@@ -309,13 +236,7 @@ class Settings:
 
     def read_persistent_object(self, section: str, obj: object) -> None:
         """
-        Updates the object's instance dictionary with literal read values.
-
-        This will only set plain instance attributes. It will NOT overwrite
-        class-level descriptors (properties, methods, functions) directly by
-        writing into `__dict__`. For properties with setters we attempt to
-        set them via `setattr()` so the setter logic can run. For read-only
-        properties or callables we skip assignment to avoid shadowing.
+        Updates the objects instance dictionary with literal read values.
 
         @param section: section to load into string dict
         @param obj: object to apply read values.
@@ -327,44 +248,11 @@ class Settings:
                 item = ast.literal_eval(item)
             except (ValueError, SyntaxError):
                 pass
-
-            # If the class defines an attribute with this name, be conservative:
-            # - if it's a property, try to set via setattr (invokes setter)
-            # - if it's callable (method, function), skip assignment
-            # - otherwise, treat as an instance attribute and put into __dict__
-            cls_attr = getattr(type(obj), k, None)
-            if cls_attr is not None:
-                # property handling: try to set using setter if defined
-                if isinstance(cls_attr, property):
-                    try:
-                        setattr(obj, k, item)
-                    except AttributeError:
-                        # read-only property; skip assignment and remove persisted key
-                        try:
-                            del self._config_dict[section][k]
-                            # print(f"Settings: removed persisted key '{k}' in section '{section}' to avoid shadowing read-only property on {type(obj).__name__}")
-                        except Exception:
-                            pass
-                        continue
-                    continue
-                # If attribute is callable, don't overwrite methods; remove persisted key
-                if callable(cls_attr):
-                    try:
-                        del self._config_dict[section][k]
-                        # silent: removed persisted key to avoid shadowing callable
-                    except Exception:
-                        pass
-                    continue
-
-            # Safe to set as instance attribute
             obj.__dict__[k] = item
 
     def read_persistent_string_dict(
-        self,
-        section: str,
-        dictionary: Optional[Dict[str, str]] = None,
-        suffix: bool = False,
-    ) -> Dict[str, str]:
+        self, section: str, dictionary: Optional[Dict] = None, suffix: bool = False
+    ) -> Dict:
         """
         Updates the given dictionary with the key values at the given section.
 
@@ -376,7 +264,7 @@ class Settings:
         @return:
         """
         if dictionary is None:
-            dictionary = {}
+            dictionary = dict()
         for k in list(self.keylist(section)):
             item = self._config_dict[section][k]
             if not suffix:
@@ -388,7 +276,7 @@ class Settings:
 
     def write_persistent(
         self, section: str, key: str, value: Union[str, int, float, bool, list, tuple]
-    ) -> None:
+    ):
         """
         Directly write the value to persistent storage.
 
@@ -399,7 +287,7 @@ class Settings:
         try:
             config_section = self._config_dict[section]
         except KeyError:
-            config_section = {}
+            config_section = dict()
             self._config_dict[section] = config_section
 
         if isinstance(value, (str, int, float, bool)):
@@ -408,7 +296,7 @@ class Settings:
             s = str(value)
             config_section[str(key)] = s
 
-    def write_persistent_dict(self, section: str, write_dict: Dict[str, Any]) -> None:
+    def write_persistent_dict(self, section, write_dict):
         """
         Write all valid attribute values of this object to the section provided.
 
@@ -422,7 +310,7 @@ class Settings:
             if isinstance(value, (str, int, float, bool, list, tuple)):
                 self.write_persistent(section, key, value)
 
-    def write_persistent_attributes(self, section: str, obj: Any) -> None:
+    def write_persistent_attributes(self, section, obj):
         """
         Write all valid attribute values of this object to the section provided.
 
@@ -432,7 +320,7 @@ class Settings:
         """
         self.write_persistent_dict(section, obj.__dict__)
 
-    def clear_persistent(self, section: str) -> None:
+    def clear_persistent(self, section: str):
         """
         Clears a section of the persistent settings, all subsections are also cleared.
 
@@ -446,7 +334,7 @@ class Settings:
         except KeyError:
             pass
 
-    def delete_persistent(self, section: str, key: str) -> None:
+    def delete_persistent(self, section: str, key: str):
         """
         Deletes a key within a section of the persistent settings.
 
@@ -459,7 +347,7 @@ class Settings:
         except KeyError:
             pass
 
-    def delete_all_persistent(self) -> None:
+    def delete_all_persistent(self):
         """
         Deletes all persistent settings.
         @return:

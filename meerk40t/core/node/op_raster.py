@@ -2,29 +2,26 @@ from copy import copy
 from math import isnan
 
 from meerk40t.constants import (
+    RASTER_T2B,
     RASTER_B2T,
-    RASTER_CROSSOVER,
-    RASTER_DIAGONAL,
+    RASTER_R2L,
+    RASTER_L2R,
+    RASTER_HATCH,
     RASTER_GREEDY_H,
     RASTER_GREEDY_V,
-    RASTER_HATCH,
-    RASTER_L2R,
-    RASTER_R2L,
+    RASTER_CROSSOVER,
     RASTER_SPIRAL,
-    RASTER_T2B,
 )
 from meerk40t.core.cutcode.rastercut import RasterCut
 from meerk40t.core.cutplan import CutPlanningFailedError
-from meerk40t.core.elements.element_types import elem_nodes, elem_ref_nodes, op_nodes
+from meerk40t.core.elements.element_types import *
 from meerk40t.core.node.elem_image import ImageNode
 from meerk40t.core.node.node import Node
-from meerk40t.core.node.mixins import OperationMixin
 from meerk40t.core.parameters import Parameters
 from meerk40t.core.units import MM_PER_INCH, UNITS_PER_INCH, UNITS_PER_MM, Length
 from meerk40t.svgelements import Color, Matrix, Path, Polygon
 
-
-class RasterOpNode(OperationMixin, Node, Parameters):
+class RasterOpNode(Node, Parameters):
     """
     Default object defining any raster operation done on the laser.
 
@@ -84,6 +81,7 @@ class RasterOpNode(OperationMixin, Node, Parameters):
             if attrib in self.settings:
                 del self.settings[attrib]
 
+
     def __repr__(self):
         return "RasterOp()"
 
@@ -123,8 +121,6 @@ class RasterOpNode(OperationMixin, Node, Parameters):
             raster_dir = "GR|"
         elif self.raster_direction == RASTER_SPIRAL:
             raster_dir = "(.)"
-        elif self.raster_direction == RASTER_DIAGONAL:
-            raster_dir = "/"
         else:
             raster_dir = str(self.raster_direction)
         default_map["direction"] = f"{raster_swing}{raster_dir} "
@@ -162,23 +158,15 @@ class RasterOpNode(OperationMixin, Node, Parameters):
             # Will be dealt with in elements -
             # we don't implement a more sophisticated routine here
             return False
-        if (
-            drag_node.type.startswith("elem ")
-            and drag_node.type in self._allowed_elements_dnd
-        ):
+        if drag_node.type.startswith("elem ") and drag_node.type in self._allowed_elements_dnd:
             return True
-        elif (
-            drag_node.type == "reference"
-            and drag_node.node.type in self._allowed_elements_dnd
-        ):
+        elif drag_node.type == "reference" and drag_node.node.type in self._allowed_elements_dnd:
             return True
         elif drag_node.type in op_nodes:
             # Move operation to a different position.
             return True
         elif drag_node.type in ("file", "group"):
-            return not any(
-                e.has_ancestor("branch reg") for e in drag_node.flat(elem_nodes)
-            )
+            return not any(e.has_ancestor("branch reg") for e in drag_node.flat(elem_nodes))
         return False
 
     def drop(self, drag_node, modify=True, flag=False):
@@ -228,61 +216,35 @@ class RasterOpNode(OperationMixin, Node, Parameters):
             result = some_nodes
         return result
 
-    def drop_multi(self, drag_nodes, modify=True, flag=False):
-        """Drop multiple nodes at once for better performance"""
-        if not drag_nodes:
+    def has_color_attribute(self, attribute):
+        return attribute in self.allowed_attributes
+
+    def add_color_attribute(self, attribute):
+        if not attribute in self.allowed_attributes:
+            self.allowed_attributes.append(attribute)
+
+    def remove_color_attribute(self, attribute):
+        if attribute in self.allowed_attributes:
+            self.allowed_attributes.remove(attribute)
+
+    def has_attributes(self):
+        return "stroke" in self.allowed_attributes or "fill" in self.allowed_attributes
+
+    def is_referenced(self, node):
+        for e in self.children:
+            if e is node:
+                return True
+            if hasattr(e, "node") and e.node is node:
+                return True
+        return False
+
+    def valid_node_for_reference(self, node):
+        if node.type in self._allowed_elements_dnd:
+            return True
+        else:
             return False
 
-        elements_to_add = []
-        ops_to_move = []
-        references_to_move = []
-        success = False
-
-        for drag_node in drag_nodes:
-            if drag_node.type in op_nodes:
-                if modify:
-                    ops_to_move.append(drag_node)
-                success = True
-                continue
-
-            if drag_node.type == "reference":
-                if modify:
-                    references_to_move.append(drag_node)
-                success = True
-                continue
-
-            if drag_node.type.startswith("elem") and not drag_node.has_ancestor(
-                "branch reg"
-            ):
-                if modify:
-                    elements_to_add.append(drag_node)
-                success = True
-                continue
-
-            if drag_node.type in ("file", "group") and not drag_node.has_ancestor(
-                "branch reg"
-            ):
-                found = False
-                for e in drag_node.flat(types=elem_nodes):
-                    if modify:
-                        elements_to_add.append(e)
-                    found = True
-                if found:
-                    success = True
-                continue
-
-        if modify:
-            if ops_to_move:
-                self.insert_siblings(ops_to_move, fast=True)
-            if references_to_move:
-                self.append_children(references_to_move, fast=True)
-            if elements_to_add:
-                for elem in elements_to_add:
-                    self.add_reference(elem, pos=None if flag else 0, fast=True)
-
-        return success
-
-    def would_classify(self, node, fuzzy=False, fuzzydistance=100, usedefault=False):
+    def classify(self, node, fuzzy=False, fuzzydistance=100, usedefault=False):
         def matching_color(col1, col2):
             _result = False
             if col1 is None and col2 is None:
@@ -309,6 +271,7 @@ class RasterOpNode(OperationMixin, Node, Parameters):
             if self.default and usedefault:
                 # Have classified but more classification might be needed
                 if self.valid_node_for_reference(node):
+                    self.add_reference(node)
                     feedback.append("stroke")
                     feedback.append("fill")
                     return True, self.stopop, feedback
@@ -325,6 +288,7 @@ class RasterOpNode(OperationMixin, Node, Parameters):
                             if matching_color(plain_color_op, plain_color_node):
                                 if self.valid_node_for_reference(node):
                                     result = True
+                                    self.add_reference(node)
                                     # Have classified but more classification might be needed
                                     feedback.append(attribute)
                     if result:
@@ -336,6 +300,10 @@ class RasterOpNode(OperationMixin, Node, Parameters):
                             addit = True
                         if hasattr(node, "fill"):
                             if node.fill is not None and node.fill.argb is not None:
+                                # if matching_color(node.fill, Color("white")):
+                                #     addit = True
+                                # if matching_color(node.fill, Color("black")):
+                                #     addit = True
                                 addit = True
                                 feedback.append("fill")
                         if hasattr(node, "stroke"):
@@ -347,6 +315,8 @@ class RasterOpNode(OperationMixin, Node, Parameters):
                                     addit = True
                                     feedback.append("stroke")
                         if addit:
+                            self.add_reference(node)
+                            # Have classified but more classification might be needed
                             return True, self.stopop, feedback
         return False, False, None
 
@@ -378,13 +348,8 @@ class RasterOpNode(OperationMixin, Node, Parameters):
         height_in_inches = (max_y - min_y) / UNITS_PER_INCH
         speed_in_per_s = self.speed / MM_PER_INCH
         if self.raster_direction in (
-            RASTER_T2B,
-            RASTER_B2T,
-            RASTER_HATCH,
-            RASTER_GREEDY_H,
-            RASTER_CROSSOVER,
-            RASTER_SPIRAL,
-            RASTER_DIAGONAL,
+            RASTER_T2B, RASTER_B2T, RASTER_HATCH, 
+            RASTER_GREEDY_H, RASTER_CROSSOVER, RASTER_SPIRAL,
         ):
             scanlines = height_in_inches * dpi
             if not self.bidirectional:
@@ -392,12 +357,7 @@ class RasterOpNode(OperationMixin, Node, Parameters):
             this_len = scanlines * width_in_inches + height_in_inches
             estimate += this_len / speed_in_per_s
             # print (f"Horizontal scanlines: {scanlines}, Length: {this_len:.1f}")
-        if self.raster_direction in (
-            RASTER_L2R,
-            RASTER_R2L,
-            RASTER_HATCH,
-            RASTER_GREEDY_V,
-        ):
+        if self.raster_direction in (RASTER_L2R, RASTER_R2L, RASTER_HATCH, RASTER_GREEDY_V):
             scanlines = width_in_inches * dpi
             if not self.bidirectional:
                 scanlines *= 2
@@ -432,14 +392,7 @@ class RasterOpNode(OperationMixin, Node, Parameters):
             if self.consider_laserspot:
                 try:
                     laserspot = getattr(context.device, "laserspot", "0.3mm")
-                    spot = (
-                        2
-                        * float(Length(laserspot))
-                        / (
-                            context.device.view.native_scale_x
-                            + context.device.view.native_scale_y
-                        )
-                    )
+                    spot = 2 * float(Length(laserspot)) / ( context.device.view.native_scale_x + context.device.view.native_scale_y)
                     # print (f"Laserpot in device units: {spot:.2f} [{laserspot.length_mm}], scale: {context.device.view.native_scale_x + context.device.view.native_scale_y:.2f}")
                 except (ValueError, AttributeError):
                     spot = 0
@@ -486,11 +439,11 @@ class RasterOpNode(OperationMixin, Node, Parameters):
             img_mx = Matrix.scale(step_x, step_y)
             data = []
             for node in self.flat():
-                if node.type == "reference":
-                    node = node.node
                 if node.type not in self._allowed_elements_dnd:
                     continue
-                if getattr(node, "hidden", False):
+                if node.type == "reference":
+                    node = node.node
+                if getattr(node, 'hidden', False):
                     continue
                 data.append(node)
             if not data:
@@ -555,7 +508,6 @@ class RasterOpNode(OperationMixin, Node, Parameters):
             elif self.raster_direction == RASTER_B2T:
                 self.raster_direction = RASTER_T2B
         if negative_scale_x:
-            # print ("Negative scale X -> flipping L2R/R2L")
             # X is negative scale, flip raster_direction if needed
             self.raster_preference_left = not self.raster_preference_left
             if self.raster_direction == RASTER_R2L:
@@ -564,7 +516,6 @@ class RasterOpNode(OperationMixin, Node, Parameters):
                 self.raster_direction = RASTER_R2L
 
         commands.append(make_image)
-
         # Look for registered raster (image) preprocessors,
         # these are routines that take one image as parameter
         # and deliver a set of (result image, method (aka raster_direction) )
@@ -573,16 +524,14 @@ class RasterOpNode(OperationMixin, Node, Parameters):
         def call_me(method):
             def handler():
                 method(self)
-
             return handler
 
-        for key, description, method in context.kernel.lookup_all(
-            "raster_preprocessor/.*"
-        ):
+        for key, description, method in context.kernel.lookup_all("raster_preprocessor/.*"):
             if key == self.raster_direction:
                 plan.commands.append(call_me(method))
                 # print (f"Found {description}")
                 break
+
 
     def as_cutobjects(self, closed_distance=15, passes=1):
         """
@@ -618,13 +567,7 @@ class RasterOpNode(OperationMixin, Node, Parameters):
             # Set variables by direction
             if direction in (RASTER_GREEDY_V, RASTER_L2R, RASTER_R2L):
                 horizontal = False
-            if direction in (
-                RASTER_B2T,
-                RASTER_T2B,
-                RASTER_HATCH,
-                RASTER_CROSSOVER,
-                RASTER_GREEDY_H,
-            ):
+            if direction in (RASTER_B2T, RASTER_T2B, RASTER_HATCH, RASTER_CROSSOVER, RASTER_GREEDY_H):
                 horizontal = True
             if direction in (RASTER_T2B, RASTER_CROSSOVER):
                 start_on_top = True
@@ -646,8 +589,6 @@ class RasterOpNode(OperationMixin, Node, Parameters):
                 continue
             if image_node.type != "elem image":
                 continue
-
-            # print (f"Raster direction for {image_node.type}: {direction}, horizontal: {horizontal}, bidir: {bidirectional}, start_on_left: {start_on_left}, start_on_top: {start_on_top}")
 
             step_x = image_node.step_x
             step_y = image_node.step_y
@@ -687,49 +628,33 @@ class RasterOpNode(OperationMixin, Node, Parameters):
                 )
             )
             image_filter = None
-            if not self.use_grayscale:  # By default a bw picture
+            if not self.use_grayscale: # By default a bw picture
                 threshold = 200
-                pil_image = pil_image.point(
-                    lambda x: 255 if x > threshold else 0, mode="1"
-                )
+                pil_image = pil_image.point(lambda x: 255 if x > threshold else 0, mode="1")
                 # pil_image = pil_image.convert("1")
-            if self.raster_direction in (
-                RASTER_GREEDY_H,
-                RASTER_GREEDY_V,
-            ):  # Greedy nearest neighbour
+            if self.raster_direction in (RASTER_GREEDY_H, RASTER_GREEDY_V): # Greedy nearest neighbour
                 # get some image statistics
                 white_pixels = 0
                 used_colors = pil_image.getcolors()
                 for col_count, col in used_colors:
-                    if col == 255:
+                    if col==255:
                         white_pixels = col_count
                         break
                 white_pixel_ratio = white_pixels / (pil_image.width * pil_image.height)
                 # print (f"white pixels: {white_pixels}, ratio = {white_pixel_ratio:.3f}")
                 if white_pixel_ratio < 0.3:
-                    self.raster_direction = (
-                        RASTER_T2B
-                        if self.raster_direction == RASTER_GREEDY_H
-                        else RASTER_L2R
-                    )
+                    self.raster_direction = RASTER_T2B if self.raster_direction == RASTER_GREEDY_H else RASTER_L2R
 
-            if self.raster_direction in (
-                RASTER_CROSSOVER,
-                RASTER_SPIRAL,
-            ):  # Crossover - need both
+            if self.raster_direction in (RASTER_CROSSOVER, RASTER_SPIRAL): # Crossover - need both
                 settings["raster_step_x"] = step_x
                 settings["raster_step_y"] = step_y
-            if self.raster_direction in (RASTER_CROSSOVER, RASTER_SPIRAL):
                 horizontal = True
                 start_on_top = True
                 start_on_left = True
-            if (
-                self.raster_direction == RASTER_CROSSOVER
-                and "split_crossover" in self._instructions
-            ):
+            if self.raster_direction == RASTER_CROSSOVER and "split_crossover" in self._instructions:
                 self._instructions["mode_filter"] = "ROW"
-                horizontal = True
-                bidirectional = True
+                horizontal=True
+                bidirectional=True
                 start_on_top = True
                 start_on_left = True
                 if horizontal:
@@ -768,7 +693,7 @@ class RasterOpNode(OperationMixin, Node, Parameters):
                 cutcodes.append(cut)
 
                 # Now set it for the next pass
-                horizontal = False
+                horizontal=False
                 if horizontal:
                     # Raster step is only along y for horizontal raster
                     settings["raster_step_x"] = 0
@@ -802,7 +727,7 @@ class RasterOpNode(OperationMixin, Node, Parameters):
                 passes=passes,
                 post_filter=image_filter,
                 laserspot=dotwidth,
-                special=dict(self._instructions),
+                special=self._instructions,
             )
             cut.path = path
             cut.original_op = self.type
@@ -841,7 +766,7 @@ class RasterOpNode(OperationMixin, Node, Parameters):
                     settings=cutsettings,
                     passes=passes,
                     laserspot=dotwidth,
-                    special=dict(self._instructions),
+                    special=self._instructions,
                 )
                 cut.path = path
                 cut.original_op = self.type
@@ -857,11 +782,6 @@ class RasterOpNode(OperationMixin, Node, Parameters):
         self._bounds = None
         if self.output:
             if self._children:
-                self._bounds = Node.union_bounds(
-                    self._children,
-                    bounds=self._bounds,
-                    ignore_locked=False,
-                    ignore_hidden=True,
-                )
+                self._bounds = Node.union_bounds(self._children, bounds=self._bounds, ignore_locked=False, ignore_hidden=True)
             self._bounds_dirty = False
         return self._bounds

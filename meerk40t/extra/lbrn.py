@@ -15,7 +15,7 @@ import PIL.Image
 from meerk40t.core.exceptions import BadFileError
 from meerk40t.core.units import UNITS_PER_MM
 from meerk40t.svgelements import Color, Matrix
-from meerk40t.core.geomstr import Geomstr
+from meerk40t.tools.geomstr import Geomstr
 
 
 def plugin(kernel, lifecycle):
@@ -167,10 +167,9 @@ class LbrnLoader:
         op_branch = elements.op_branch
         elem_branch = elements.elem_branch
 
-        with elements.node_lock:
-            op_branch.remove_all_children()
-            elem_branch.remove_all_children()
-            context = elem_branch.add(type="file", filepath=pathname)
+        op_branch.remove_all_children()
+        elem_branch.remove_all_children()
+        context = elem_branch.add(type="file", filepath=pathname)
 
         vertlist = None
         primlist = None
@@ -211,13 +210,12 @@ class LbrnLoader:
                     stack.append((context, matrix))
                     matrix = Matrix(matrix)
                     _type = elem.attrib.get("Type")
-                    with elements.node_lock:
-                        if _type == "Group":
-                            context = context.add(type="group")
-                        elif _type in "Text":
-                            context = context.add(
-                                type="group", label=elem.attrib.get("Str")
-                            )
+                    if _type == "Group":
+                        context = context.add(type="group")
+                    elif _type in "Text":
+                        context = context.add(
+                            type="group", label=elem.attrib.get("Str")
+                        )
                 elif elem.tag == "Thumbnail":
                     pass
                     # thumb_source_data = base64.b64decode(elem.attrib.get("Source"))
@@ -243,13 +241,12 @@ class LbrnLoader:
                     op_type = values.get("type")
                     cut_settings_img[values["index"]] = values
                     if op_type == "Image":
-                        with elements.node_lock:
-                            values["op"] = op_branch.add(
-                                type="op image",
-                                label=values.get("name"),
-                                speed=float(values.get("speed", DEFAULT_SPEED)),
-                                power=float(values.get("maxPower", DEFAULT_POWER)) * 10.0,
-                            )
+                        values["op"] = values["op"] = op_branch.add(
+                            type="op image",
+                            label=values.get("name"),
+                            speed=float(values.get("speed", DEFAULT_SPEED)),
+                            power=float(values.get("maxPower", DEFAULT_POWER)) * 10.0,
+                        )
                 elif elem.tag == "CutSetting":
                     values = {"tag": elem.tag}
                     for c, c_children in children:
@@ -259,29 +256,26 @@ class LbrnLoader:
                     op_type = values.get("type")
                     cut_settings[values["index"]] = values
                     if op_type == "Cut":
-                        with elements.node_lock:
-                            values["op"] = op_branch.add(
-                                type="op cut",
-                                label=values.get("name"),
-                                speed=float(values.get("speed", DEFAULT_SPEED)),
-                                power=float(values.get("maxPower", DEFAULT_POWER)) * 10.0,
-                            )
+                        values["op"] = op_branch.add(
+                            type="op cut",
+                            label=values.get("name"),
+                            speed=float(values.get("speed", DEFAULT_SPEED)),
+                            power=float(values.get("maxPower", DEFAULT_POWER)) * 10.0,
+                        )
                     elif op_type == "Scan":
-                        with elements.node_lock:
-                            values["op"] = op_branch.add(
-                                type="op raster",
-                                label=values.get("name"),
-                                speed=float(values.get("speed", DEFAULT_SPEED)),
+                        values["op"] = op_branch.add(
+                            type="op raster",
+                            label=values.get("name"),
+                            speed=float(values.get("speed", DEFAULT_SPEED)),
                             power=float(values.get("maxPower", DEFAULT_POWER)) * 10.0,
                         )
                     else:
-                        with elements.node_lock:
-                            values["op"] = op_branch.add(
-                                type="op engrave",
-                                label=values.get("name"),
-                                speed=float(values.get("speed", DEFAULT_SPEED)),
-                                power=float(values.get("maxPower", DEFAULT_POWER)) * 10.0,
-                            )
+                        values["op"] = op_branch.add(
+                            type="op engrave",
+                            label=values.get("name"),
+                            speed=float(values.get("speed", DEFAULT_SPEED)),
+                            power=float(values.get("maxPower", DEFAULT_POWER)) * 10.0,
+                        )
                 elif elem.tag == "XForm":
                     matrix = Matrix(*map(float, elem.text.split(" "))) * matrix
                 elif elem.tag in ("Shape", "BackupPath"):
@@ -300,50 +294,46 @@ class LbrnLoader:
                     if _type == "Text":
                         if not bool(int(values.get("HasBackupPath", 0))):
                             text = values.get("Str")
-                            with elements.node_lock:
-                                node = context.add(
-                                    type="elem text",
-                                    label=text,
-                                    text=text,
-                                    matrix=matrix,
-                                    font=values.get("Font"),
-                                    stroke=color,
-                                )
-                                _cut_settings.get("op").add_reference(node)
+                            node = context.add(
+                                type="elem text",
+                                label=text,
+                                text=text,
+                                matrix=matrix,
+                                font=values.get("Font"),
+                                stroke=color,
+                            )
+                            _cut_settings.get("op").add_reference(node)
                     elif _type == "Path":
                         geometry = geomstr_from_vert_list(vertlist, primlist)
                         geometry.transform(matrix)
-                        with elements.node_lock:
-                            node = context.add(
-                                type="elem path", geometry=geometry, stroke=color
-                            )
-                            _cut_settings.get("op").add_reference(node)
+                        node = context.add(
+                            type="elem path", geometry=geometry, stroke=color
+                        )
+                        _cut_settings.get("op").add_reference(node)
                     elif _type == "Rect":
                         width = float(values.get("W", 0))
                         height = float(values.get("H", 0))
-                        with elements.node_lock:
-                            node = context.add(
-                                type="elem rect",
-                                x=-width / 2,
-                                y=-height / 2,
-                                width=width,
-                                height=height,
-                                stroke=color,
-                                matrix=matrix,
-                            )
-                            _cut_settings.get("op").add_reference(node)
+                        node = context.add(
+                            type="elem rect",
+                            x=-width / 2,
+                            y=-height / 2,
+                            width=width,
+                            height=height,
+                            stroke=color,
+                            matrix=matrix,
+                        )
+                        _cut_settings.get("op").add_reference(node)
                     elif _type == "Ellipse":
-                        with elements.node_lock:
-                            node = context.add(
-                                type="elem ellipse",
-                                cx=0,
-                                cy=0,
-                                rx=float(values.get("Rx", 0)),
-                                ry=float(values.get("Ry", 0)),
-                                stroke=color,
-                                matrix=matrix,
-                            )
-                            _cut_settings.get("op").add_reference(node)
+                        node = context.add(
+                            type="elem ellipse",
+                            cx=0,
+                            cy=0,
+                            rx=float(values.get("Rx", 0)),
+                            ry=float(values.get("Ry", 0)),
+                            stroke=color,
+                            matrix=matrix,
+                        )
+                        _cut_settings.get("op").add_reference(node)
                     elif _type == "Polygon":
                         rx = float(values.get("Rx", 0))
                         ry = float(values.get("Ry", 0))
@@ -354,11 +344,10 @@ class LbrnLoader:
                         )
                         matrix.pre_scale(rx, ry)
                         geometry.transform(matrix)
-                        with elements.node_lock:
-                            node = context.add(
-                                type="elem path", geometry=geometry, stroke=color
-                            )
-                            _cut_settings.get("op").add_reference(node)
+                        node = context.add(
+                            type="elem path", geometry=geometry, stroke=color
+                        )
+                        _cut_settings.get("op").add_reference(node)
                     elif _type == "Bitmap":
                         # Needs image specific settings.
                         _cut_settings = cut_settings_img.get(_cut_index, None)
@@ -373,13 +362,12 @@ class LbrnLoader:
                         height = float(values.get("H"))
                         matrix.pre_translate(-width / 2, -height / 2)
                         matrix.pre_scale(width / image.width, height / image.height)
-                        with elements.node_lock:
-                            node = context.add(
-                                type="elem image",
-                                image=image,
-                                matrix=matrix,
-                            )
-                            _cut_settings.get("op").add_reference(node)
+                        node = context.add(
+                            type="elem image",
+                            image=image,
+                            matrix=matrix,
+                        )
+                        _cut_settings.get("op").add_reference(node)
                     vertlist = None
                     primlist = None
                     context, matrix = stack.pop()

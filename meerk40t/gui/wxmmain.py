@@ -314,10 +314,6 @@ class MeerK40t(MWindow):
         width, height = wx.DisplaySize()
 
         super().__init__(int(width * 0.9), int(height * 0.9), *args, **kwds)
-        theme = self.context.themes
-        import meerk40t.gui.icons as icons
-
-        icons.DARKMODE = theme.dark
 
         # We do this very early to allow resizing events to do their thing...
         self.restore_aspect(honor_initial_values=True)
@@ -457,7 +453,7 @@ class MeerK40t(MWindow):
         kernel = self.context.kernel
 
         maxit = hasattr(kernel.args, "maximized") and kernel.args.maximized
-        minit = hasattr(kernel.args, "minimized") and kernel.args.minimized
+        minit = hasattr(kernel.args, "minimized") and kernel.args.minimized 
         remember = self.context.setting(bool, "remember_main_pos", True)
         if remember:
             self.RestoreWindowState(force_maximized=maxit, force_minimized=minit)
@@ -468,37 +464,7 @@ class MeerK40t(MWindow):
             elif minit:
                 self.Iconize()
         self.Bind(wx.EVT_ACTIVATE, self.on_active)
-        # Bind the power events
-        self.Bind(wx.EVT_POWER_SUSPENDING, self.on_power_suspend)
-        self.Bind(wx.EVT_POWER_RESUME, self.on_power_resume)
 
-    def on_power_suspend(self, event=None):
-        # Do we have an active job? If yes, we would like to pause it
-        if self.context.setting(bool, "pause_on_suspend", True):
-            channel = self.context.kernel.channels["console"]
-            available_devices = self.context.kernel.services("device")
-            for device in available_devices:
-                if hasattr(device.driver, "paused") and device.driver.paused:
-                    continue
-                if not hasattr(device, "spooler") or device.spooler is None:
-                    continue
-                active = any(
-                    hasattr(e, "is_running") and e.is_running() for e in spooler.queue
-                )
-                if active:
-                    if hasattr(device.driver, "pause") and callable(
-                        device.driver.pause
-                    ):
-                        device.driver.pause()
-                    channel(f"Did need to stop {device.label} before suspend")
-            self.context.signal("system_suspended")
-            channel("Suspending...")
-        if event is not None:
-            event.Skip()
-
-    def on_power_resume(self, event=None):
-        event.Skip()  # Continue processing the event
-        self.context.signal("system_resumed")
 
     def SaveWindowState(self):
         # Save window position, size, and state
@@ -512,13 +478,7 @@ class MeerK40t(MWindow):
         self.context.mainwin_maximized = maximized
         self.context.mainwin_minimized = minimized
 
-    def RestoreWindowState(
-        self,
-        default_pos=None,
-        default_size=None,
-        force_minimized=False,
-        force_maximized=False,
-    ):
+    def RestoreWindowState(self, default_pos=None, default_size=None, force_minimized=False, force_maximized=False):
         # Restore window position, size, and state
         pos = self.context.mainwin_pos
         size = self.context.mainwin_size
@@ -527,13 +487,11 @@ class MeerK40t(MWindow):
         # Get all screens
         display_count = wx.Display.GetCount()
         screens = [wx.Display(i).GetGeometry() for i in range(display_count)]
-
         def in_any_screen(x, y):
             for rect in screens:
                 if rect.Contains(wx.Point(x, y)):
                     return True
             return False
-
         # Default position and size: use first screen's geometry
         if screens:
             first_screen = screens[0]
@@ -546,16 +504,11 @@ class MeerK40t(MWindow):
                 default_pos = wx.Point(0, 0)
             if default_size is None:
                 default_size = wx.Size(1024, 768)
-
         # Validate position and size to ensure the window is mostly visible on a screen
         def rect_mostly_in_screen(x, y, w, h, threshold=0.5):
             # Returns True if at least `threshold` fraction of the window area is on any screen
             window_rect = wx.Rect(x, y, w, h)
-            for screen in (
-                [wx.Display(i).GetGeometry() for i in range(wx.Display.GetCount())]
-                if wx.Display.GetCount()
-                else []
-            ):
+            for screen in wx.Display.GetCount() and [wx.Display(i).GetGeometry() for i in range(wx.Display.GetCount())] or []:
                 intersection = window_rect.Intersect(screen)
                 if intersection.IsEmpty():
                     continue
@@ -569,13 +522,9 @@ class MeerK40t(MWindow):
 
         # Determine intended position and size
         intended_pos = pos if pos else (default_pos.x, default_pos.y)
-        intended_size = (
-            size if size else (default_size.GetWidth(), default_size.GetHeight())
-        )
+        intended_size = size if size else (default_size.GetWidth(), default_size.GetHeight())
 
-        if rect_mostly_in_screen(
-            intended_pos[0], intended_pos[1], intended_size[0], intended_size[1]
-        ):
+        if rect_mostly_in_screen(intended_pos[0], intended_pos[1], intended_size[0], intended_size[1]):
             self.SetPosition(wx.Point(intended_pos[0], intended_pos[1]))
         else:
             self.SetPosition(default_pos)
@@ -591,7 +540,7 @@ class MeerK40t(MWindow):
         elif minimized:
             self.Iconize()
 
-    def on_active(self, event=None):
+    def on_active(self, event):
         if event.GetActive():
             self.context.signal("scene_activated")
         else:
@@ -846,7 +795,7 @@ class MeerK40t(MWindow):
                 if node.can_emphasize:
                     node.emphasized = flag
             elements.validate_selected_area()
-            self.context.elements.refresh_signal()
+            self.context.signal("refresh_scene", "Scene")
 
         def on_click_properties():
             self.context("window open Properties\n")
@@ -859,12 +808,6 @@ class MeerK40t(MWindow):
 
         def on_click_pref_wordlist():
             self.context("window open Wordlist\n")
-
-        def on_click_pref_batchrun():
-            self.context("window open BatchRun\n")
-
-        def on_click_pref_cameracal():
-            self.context("window open CameraCalib\n")
 
         def on_click_pref_fonts():
             self.context("window open HersheyFontManager\n")
@@ -1066,20 +1009,6 @@ class MeerK40t(MWindow):
                     "segment": "Settings",
                 },
                 {
-                    "label": _("CSV Batch Run"),
-                    "help": _("Run repeated jobs from CSV wordlist rows"),
-                    "action": on_click_pref_batchrun,
-                    "level": 2,
-                    "segment": "Settings",
-                },
-                {
-                    "label": _("Camera Calibration"),
-                    "help": _("Guide camera perspective and bed overlay"),
-                    "action": on_click_pref_cameracal,
-                    "level": 2,
-                    "segment": "Settings",
-                },
-                {
                     "label": _("Font-Manager"),
                     "help": _("Open the vector-font management window."),
                     "action": on_click_pref_fonts,
@@ -1140,7 +1069,6 @@ class MeerK40t(MWindow):
         bits = DRAW_MODE_REGMARKS
         self.context.draw_mode ^= bits
         self.context.signal("draw_mode", self.context.draw_mode)
-        self.context.signal("invalidate_layer", "generic")
         self.context.signal("refresh_scene", "Scene")
 
     @signal_listener("system_font_directories")
@@ -1226,7 +1154,7 @@ class MeerK40t(MWindow):
         context.setting(tuple, "mainwin_size", None)
         context.setting(bool, "mainwin_maximized", False)
         context.setting(bool, "mainwin_minimized", False)
-
+        
         # Standard-Icon-Sizes
         # default, factor 1 - leave as is
         # small = factor 2/3, min_size = 32
@@ -1518,7 +1446,6 @@ class MeerK40t(MWindow):
                 "section": "Snap-Options",
                 # Hint for translation _("Element-Points")
                 "subsection": "Element-Points",
-                "relevant": True,
             },
             {
                 "attr": "action_attract_len",
@@ -1538,7 +1465,6 @@ class MeerK40t(MWindow):
                 "section": "Snap-Options",
                 # Hint for translation _("Element-Points")
                 "subsection": "Element-Points",
-                "relevant": True,
             },
             {
                 "attr": "snap_grid",
@@ -1554,7 +1480,6 @@ class MeerK40t(MWindow):
                 "section": "Snap-Options",
                 # Hint for translation _("Grid")
                 "subsection": "Grid",
-                "relevant": True,
             },
             {
                 "attr": "grid_attract_len",
@@ -1574,7 +1499,6 @@ class MeerK40t(MWindow):
                 "section": "Snap-Options",
                 # Hint for translation _("Grid")
                 "subsection": "Grid",
-                "relevant": True,
             },
             {
                 "attr": "clear_magnets",
@@ -1590,39 +1514,6 @@ class MeerK40t(MWindow):
                 "section": "Snap-Options",
                 # Hint for translation _("Magnetlines")
                 "subsection": "Magnetlines",
-            },
-            {
-                "attr": "snap_instant",
-                "object": context.root,
-                "default": False,
-                "type": bool,
-                "label": _("Instant Snap Display"),
-                "tip": _(
-                    "Calculate and display snap points immediately during mouse movement (may affect performance)\n"
-                    "If disabled, snap points are only calculated when the mouse is not moving"
-                ),
-                "page": "Scene",
-                # Hint for translation _("Snap-Options")
-                "section": "Snap-Options",
-                # Hint for translation _("Instant Snap Display")
-                "subsection": "Instant Snap Display",
-                "relevant": True,
-            },
-            {
-                "attr": "snap_preview",
-                "object": context.root,
-                "default": True,
-                "type": bool,
-                "label": _("Show snap line"),
-                "tip": _(
-                    "Displays a preview line from the cursor to the snap point"
-                ),
-                "page": "Scene",
-                # Hint for translation _("Snap-Options")
-                "section": "Snap-Options",
-                # Hint for translation _("Instant Snap Display")
-                "subsection": "Instant Snap Display",
-                "relevant": True,
             },
         ]
         for c in choices:
@@ -1758,46 +1649,11 @@ class MeerK40t(MWindow):
         """
         Activate the node in question.
 
-        Laser operations open Parameter-Test (embedded property pages).
-        Elements and other nodes open the standalone Properties window.
-
         @param node:
         @return:
         """
+        # print(f"Calling property for {node.type}")
         self.context.elements.set_emphasis([node])
-        target = node
-        if getattr(node, "type", None) == "reference" and hasattr(node, "parent"):
-            target = node.parent
-
-        # Check whether we do have a variable to open the special parameter test window for laser operations.
-        variable_test_enabled = self.context.setting(bool, "use_variable_test_on_double_click", False)
-        laser_op_types = ("op cut", "op engrave", "op raster", "op image", "op dots")
-        if variable_test_enabled and getattr(target, "type", None) in laser_op_types:
-
-            def open_parameter_test():
-                window_uri = "window/Templatetool"
-                try:
-                    parent = self.context.gui
-                except AttributeError:
-                    parent = None
-                try:
-                    tool = self.context.opened[window_uri]
-                except KeyError:
-                    self.context.open_as(window_uri, window_uri, parent)
-                    tool = self.context.opened[window_uri]
-                if tool is None:
-                    self.context("window open Properties\n")
-                    return
-                if hasattr(tool, "panel_template"):
-                    tool.panel_template.select_operation_for_node(target)
-                tool.set_node(target, focus_properties=True)
-
-            if wx.IsMainThread():
-                open_parameter_test()
-            else:
-                wx.CallAfter(open_parameter_test)
-            return
-
         self.context("window open Properties\n")
 
     @staticmethod
@@ -1930,35 +1786,26 @@ class MeerK40t(MWindow):
             return handler
 
         def run_job(*args):
-            context = kernel.root
-            hold = context.setting(bool, "laserpane_hold", False)
-            prefer_threaded = context.setting(bool, "prefer_threaded_mode", True)
-            prefix = "threaded " if prefer_threaded else ""
-
             busy = kernel.busyinfo
             context = kernel.root
             opt = kernel.planner.do_optimization
-            last_plan = kernel.planner.get_last_plan()
-            if last_plan is not None and hold:
-                context(f"plan{last_plan} spool\n")
+            busy.start(msg=_("Preparing Laserjob..."))
+            plan = kernel.planner.get_or_make_plan("z")
+            context.setting(bool, "laserpane_hold", False)
+            if plan.plan and context.laserpane_hold:
+                context("planz spool\n")
             else:
-                new_plan = kernel.planner.get_free_plan()
-                if not prefer_threaded:
-                    busy.start(msg=_("Preparing Laserjob..."))
                 if opt:
                     context(
-                        f"{prefix}plan{new_plan} clear copy preprocess validate blob preopt optimize spool\n"
+                        "planz clear copy preprocess validate blob preopt optimize spool\n"
                     )
                 else:
-                    context(
-                        f"{prefix}plan{new_plan} clear copy preprocess validate blob spool\n"
-                    )
-                if not prefer_threaded:
-                    busy.end()
+                    context("planz clear copy preprocess validate blob spool\n")
             if context.auto_spooler:
                 context("window open JobSpooler\n")
             # And we disarm again
             disarm_laser()
+            busy.end()
 
         def run_job_extended(*args):
             context = kernel.root
@@ -2797,6 +2644,47 @@ class MeerK40t(MWindow):
             },
         )
 
+        def group_selection():
+            group_node = None
+            lets_do_it = False
+            data = list(kernel.elements.elems(emphasized=True))
+            sel_count = len(data)
+            my_parent = None
+            for node in data:
+                this_parent = None
+                if hasattr(node, "parent") and hasattr(node.parent, "type"):
+                    if node.parent.type in ("group", "file"):
+                        this_parent = node.parent
+                    if this_parent is not None:
+                        my_parent = this_parent
+                else:
+                    if my_parent != this_parent:
+                        # different parents, so definitely a do it
+                        lets_do_it = True
+                        break
+            if not lets_do_it:
+                if my_parent is None:
+                    # All base elements
+                    lets_do_it = True
+                else:
+                    parent_ct = len(my_parent.children)
+                    if parent_ct != sel_count:
+                        # Not the full group...
+                        lets_do_it = True
+
+            if lets_do_it:
+                with kernel.elements.undoscope("Group"):
+                    for node in data:
+                        if group_node is None:
+                            group_node = node.parent.add(
+                                type="group", label="Group", expanded=True
+                            )
+                        group_node.append_child(node)
+                        node.emphasized = True
+                    if group_node is not None:
+                        group_node.emphasized = True
+                        kernel.signal("element_property_reload", "Scene", group_node)
+
         # Default Size for normal buttons
         # buttonsize = STD_ICON_SIZE
         kernel.register(
@@ -2806,7 +2694,7 @@ class MeerK40t(MWindow):
                 "icon": icons8_group_objects,
                 "tip": _("Group elements together"),
                 "help": "group",
-                "action": exec_plain("group\n"),
+                "action": lambda v: group_selection(),
                 "size": bsize_normal,
                 "rule_enabled": lambda cond: len(
                     list(kernel.elements.elems(emphasized=True))
@@ -2814,6 +2702,29 @@ class MeerK40t(MWindow):
                 > 1,
             },
         )
+
+        def ungroup_selection():
+            def release_em(node):
+                for n in list(node.children):
+                    node.insert_sibling(n)
+                node.remove_node()  # Removing group/file node.
+
+            with kernel.elements.undoscope("Ungroup"):
+                found_some = False
+                for node in list(kernel.elements.elems(emphasized=True)):
+                    if node is not None and node.type in ("group", "file"):
+                        found_some = True
+                        release_em(node)
+                if not found_some:
+                    # So let's see that we address the parents...
+                    for node in list(kernel.elements.elems(emphasized=True)):
+                        if (
+                            node is not None
+                            and hasattr(node, "parent")
+                            and hasattr(node.parent, "type")
+                            and node.parent.type in ("group", "file")
+                        ):
+                            release_em(node.parent)
 
         def part_of_group():
             for node in list(kernel.elements.elems(emphasized=True)):
@@ -2828,7 +2739,7 @@ class MeerK40t(MWindow):
                 "icon": icons8_ungroup_objects,
                 "tip": _("Ungroup elements"),
                 "help": "group",
-                "action": exec_plain("ungroup\n"),
+                "action": lambda v: ungroup_selection(),
                 "size": bsize_normal,
                 "rule_enabled": lambda cond: part_of_group(),
             },
@@ -3103,9 +3014,6 @@ class MeerK40t(MWindow):
     def window_menu(self):
         return False
 
-    def network_menu(self):
-        return False
-
     def __set_commands(self):
         context = self.context
         gui = self
@@ -3251,7 +3159,6 @@ class MeerK40t(MWindow):
             with wx.FileDialog(
                 gui,
                 _("Open"),
-                defaultDir=context.elements.last_file_dir,
                 wildcard=files,
                 style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST | wx.FD_PREVIEW,
             ) as fileDialog:
@@ -3264,7 +3171,6 @@ class MeerK40t(MWindow):
                     preferred_loader = None
 
                 pathname = fileDialog.GetPath()
-                context.elements.last_file_dir = os.path.dirname(pathname)
                 gui.clear_and_open(pathname, preferred_loader=preferred_loader)
 
         @context.console_command("dialog_import", hidden=True)
@@ -3273,7 +3179,6 @@ class MeerK40t(MWindow):
             with wx.FileDialog(
                 gui,
                 _("Import"),
-                defaultDir=context.elements.last_file_dir,
                 wildcard=files,
                 style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST | wx.FD_PREVIEW,
             ) as fileDialog:
@@ -3285,7 +3190,6 @@ class MeerK40t(MWindow):
                 except IndexError:
                     preferred_loader = None
                 pathname = fileDialog.GetPath()
-                context.elements.last_file_dir = os.path.dirname(pathname)
                 gui.load(pathname, preferred_loader, execution=False)
 
         @context.console_option("quit", "q", action="store_true", type=bool)
@@ -3304,7 +3208,6 @@ class MeerK40t(MWindow):
             with wx.FileDialog(
                 gui,
                 _("Save Project"),
-                defaultDir=context.elements.last_file_dir,
                 wildcard=files,
                 style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
             ) as fileDialog:
@@ -3314,7 +3217,6 @@ class MeerK40t(MWindow):
                     fileDialog.GetFilterIndex()
                 ]
                 pathname = fileDialog.GetPath()
-                context.elements.last_file_dir = os.path.dirname(pathname)
                 if not pathname.lower().endswith(f".{extension}"):
                     pathname += f".{extension}"
                 try:
@@ -3685,11 +3587,6 @@ class MeerK40t(MWindow):
                     pane.window.lock()
         self._mgr.Update()
 
-    def on_toggle_ribbon_verbose_hover_help(self, event):
-        checked = event.IsChecked()
-        self.context.ribbon_verbose_hover_help = checked
-        self.context.write_persistent("ribbon_verbose_hover_help", checked)
-
     def on_pane_create(self, paneinfo: aui.AuiPaneInfo):
         control = paneinfo.control
         if isinstance(control, wx.aui.AuiNotebook):
@@ -3722,12 +3619,12 @@ class MeerK40t(MWindow):
             paneinfo,
         )
 
-    def on_pane_active(self, event=None):
+    def on_pane_active(self, event):
         pane = event.GetPane()
         if hasattr(pane.window, "active"):
             pane.window.active()
 
-    def on_pane_closed(self, event=None):
+    def on_pane_closed(self, event):
         pane = event.GetPane()
         if pane.IsShown():
             if hasattr(pane.window, "pane_hide"):
@@ -3756,7 +3653,6 @@ class MeerK40t(MWindow):
         context = self.context
         context.setting(int, "draw_mode", 0)
         context.setting(bool, "print_shutdown", False)
-        context.setting(bool, "clear_on_load_recent", False)
 
         @context.console_command(
             "theme", help=_("Theming information and assignments"), hidden=True
@@ -3885,26 +3781,6 @@ class MeerK40t(MWindow):
                 pane.window.check = menu_item.Check
             except AttributeError:
                 pass
-
-        help_menu = submenus.get(_("Help"))
-        if help_menu is not None:
-            help_menu.AppendSeparator()
-            self.context.setting(bool, "ribbon_verbose_hover_help", True)
-            item_verbose = help_menu.AppendCheckItem(
-                wx.ID_ANY,
-                _("Long UI descriptions (ribbon + context menus)"),
-                _(
-                    "When checked: ribbon buttons use the long hover delay and extra text; "
-                    "tree and scene right-click menus put full descriptions in the "
-                    "status bar as you move through the menu (bottom of the window)."
-                ),
-            )
-            item_verbose.Check(self.context.ribbon_verbose_hover_help)
-            self.Bind(
-                wx.EVT_MENU,
-                self.on_toggle_ribbon_verbose_hover_help,
-                id=item_verbose.GetId(),
-            )
 
         self.panes_menu.AppendSeparator()
         item = self.main_menubar.lockpane = self.panes_menu.Append(
@@ -4075,7 +3951,6 @@ class MeerK40t(MWindow):
         self.__set_pane_menu()
         self.__set_tool_menu()
         self.__set_window_menu()
-        self.__set_network_menu()
         self.__set_help_menu()
         self.add_language_menu()
 
@@ -4192,73 +4067,53 @@ class MeerK40t(MWindow):
         # FILE MENU
         # ==========
 
-        # Recent submenu (only when not a macOS frozen app)
+        menu_item = self.file_menu.Append(
+            wx.ID_NEW, _("&New\tCtrl-N"), _("Clear Operations, Elements and Notes")
+        )
+        self.Bind(wx.EVT_MENU, self.on_click_new, id=wx.ID_NEW)
+
+        self.file_menu.Append(
+            wx.ID_OPEN,
+            _("&Open Project\tCtrl-O"),
+            _("Clear existing elements and notes and open a new file")
+            + _(" (keep the Shift-Key pressed to be asked for a target location)"),
+        )
+        self.Bind(wx.EVT_MENU, self.on_click_open, id=wx.ID_OPEN)
+
         if not getattr(sys, "frozen", False) or platform.system() != "Darwin":
             self.recent_file_menu = wx.Menu()
             self.recent_file_menu_item = self.file_menu.AppendSubMenu(
                 self.recent_file_menu, _("&Recent")
             )
-
-        choices = [
-            {
-                "label": _("&New\tCtrl-N"),
-                "help": _("Clear Operations, Elements and Notes"),
-                "action": self.on_click_new,
-                "id": wx.ID_NEW,
-            },
-            {
-                "label": _("&Open Project\tCtrl-O"),
-                "help": _("Clear existing elements and notes and open a new file")
-                + _(" (keep the Shift-Key pressed to be asked for a target location)"),
-                "action": self.on_click_open,
-                "id": wx.ID_OPEN,
-            },
-            {
-                "label": _("&Import File"),
-                "help": _("Import another file into the same project")
-                + _(" (keep the Shift-Key pressed to be asked for a target location)"),
-                "action": self.on_click_import,
-            },
-            {
-                "label": "",
-            },
-            {
-                "label": _("&Save\tCtrl-S"),
-                "help": _(
-                    "Save the project as an SVG file (overwriting any existing file)"
-                ),
-                "action": self.on_click_save,
-                "id": wx.ID_SAVE,
-            },
-            {
-                "label": _("Save &As\tCtrl-Shift-S"),
-                "help": _("Save the project in a new SVG file"),
-                "action": self.on_click_save_as,
-                "id": wx.ID_SAVEAS,
-            },
-        ]
-
-        # macOS-only Close Window entry
-        if platform.system() == "Darwin":
-            choices.append(
-                {
-                    "label": _("&Close Window\tCtrl-W"),
-                    "help": _("Close Meerk40t"),
-                    "action": self.on_click_close,
-                    "id": wx.ID_CLOSE,
-                }
-            )
-
-        choices.append(
-            {
-                "label": _("E&xit"),
-                "help": _("Close Meerk40t"),
-                "action": self.on_click_exit,
-                "id": wx.ID_EXIT,
-            }
+        menu_item = self.file_menu.Append(
+            wx.ID_ANY,
+            _("&Import File"),
+            _("Import another file into the same project")
+            + _(" (keep the Shift-Key pressed to be asked for a target location)"),
         )
+        self.Bind(wx.EVT_MENU, self.on_click_import, id=menu_item.GetId())
+        self.file_menu.AppendSeparator()
+        menu_item = self.file_menu.Append(
+            wx.ID_SAVE,
+            _("&Save\tCtrl-S"),
+            _("Save the project as an SVG file (overwriting any existing file)"),
+        )
+        self.Bind(wx.EVT_MENU, self.on_click_save, id=wx.ID_SAVE)
+        menu_item = self.file_menu.Append(
+            wx.ID_SAVEAS,
+            _("Save &As\tCtrl-Shift-S"),
+            _("Save the project in a new SVG file"),
+        )
+        self.Bind(wx.EVT_MENU, self.on_click_save_as, id=wx.ID_SAVEAS)
+        self.file_menu.AppendSeparator()
+        if platform.system() == "Darwin":
+            menu_item = self.file_menu.Append(
+                wx.ID_CLOSE, _("&Close Window\tCtrl-W"), _("Close Meerk40t")
+            )
+            self.Bind(wx.EVT_MENU, self.on_click_close, id=menu_item.GetId())
 
-        self._create_menu_from_choices(self.file_menu, choices)
+        menu_item = self.file_menu.Append(wx.ID_EXIT, _("E&xit"), _("Close Meerk40t"))
+        self.Bind(wx.EVT_MENU, self.on_click_exit, id=menu_item.GetId())
         self.main_menubar.Append(self.file_menu, _("File"))
 
     def _update_status_menu(self, menu, choices, *args):
@@ -4426,7 +4281,6 @@ class MeerK40t(MWindow):
             self.context.draw_mode ^= bits
             self.context.signal("draw_mode", self.context.draw_mode)
             self.context.elements.modified()
-            self.context.signal("invalidate_layer", "all")
             self.context.signal("refresh_scene", "Scene")
             self.context.signal("theme")
 
@@ -4776,122 +4630,6 @@ class MeerK40t(MWindow):
             wt_menu = wx.Menu()
             self.main_menubar.Append(wt_menu, _("Window"))
 
-    def __set_network_menu(self):
-        # ============
-        # NETWORK MENU
-        # ============
-        def run_command(command):
-            def handler(event):
-                self.context(f"{command}\n")
-                # Status may change, so we need to repopulate the menu
-                populate()
-
-            return handler
-
-        def populate():
-            default_telnet_port = self.context.setting(int, "default_telnet_port", 23)
-            default_webserver_port = self.context.setting(
-                int, "default_webserver_port", 8080
-            )
-
-            label = _("Network")
-            self.network_menu = wx.Menu()
-            index = self.main_menubar.FindMenu(label)
-            if index != -1:
-                self.main_menubar.Replace(index, self.network_menu, label)
-            else:
-                self.main_menubar.Append(self.network_menu, label)
-
-            # Define network services in a concise data-driven way to avoid repetition
-            services = [
-                {
-                    "id": "web-server",
-                    "type": "root",
-                    "start_label": _("Start &Webserver on port {port}"),
-                    "start_tip": _(
-                        "Starts a webserver instance to control MeerK40t from a webbrowser"
-                    ),
-                    "start_cmd": lambda: f"webserver -p {default_webserver_port}",
-                    "stop_label": _("Stop &Webserver"),
-                    "stop_tip": _("Stops the running webserver instance"),
-                    "stop_cmd": "webserver -q",
-                },
-                {
-                    "id": "console-server",
-                    "type": "root",
-                    "start_label": _("Start &Telnet on port {port}"),
-                    "start_tip": _(
-                        "Starts a telnet instance to control MeerK40t from a terminal"
-                    ),
-                    "start_cmd": lambda: f"consoleserver -p {default_telnet_port}",
-                    "stop_label": _("Stop &Telnet"),
-                    "stop_tip": _("Stops the running consoleserver instance"),
-                    "stop_cmd": "consoleserver -q",
-                    "append_separator_after": True,
-                },
-                {
-                    "id": "ruidacontrol",
-                    "type": "device",
-                    "start_label": _("Start &Ruida-Server"),
-                    "start_tip": _(
-                        "Start ruidacontrol for interaction with 3rd party software"
-                    ),
-                    "start_cmd": "ruidacontrol",
-                    "stop_label": _("Stop &Ruida-Server"),
-                    "stop_tip": _("Stop the running ruidacontrol instance"),
-                    "stop_cmd": "ruidacontrol -q",
-                },
-                {
-                    "id": "grblcontrol",
-                    "type": "device",
-                    "start_label": _("Start &GRBL-Server"),
-                    "start_tip": _(
-                        "Start grblcontrol for interaction with 3rd party software"
-                    ),
-                    "start_cmd": "grblcontrol",
-                    "stop_label": _("Stop &GRBL-Server"),
-                    "stop_tip": _("Stop the running grblcontrol instance"),
-                    "stop_cmd": "grblcontrol -q",
-                },
-            ]
-
-            for svc in services:
-                if svc["type"] == "root":
-                    running = self.context.kernel.root.get_open(svc["id"]) is not None
-                else:
-                    running = self.context.kernel.device.lookup(svc["id"]) is not None
-
-                if running:
-                    menuitem = self.network_menu.Append(
-                        wx.ID_ANY, svc["stop_label"], svc.get("stop_tip", "")
-                    )
-                    self.Bind(
-                        wx.EVT_MENU, run_command(svc["stop_cmd"]), id=menuitem.GetId()
-                    )
-                else:
-                    # Some commands are defined as callables to include runtime values like ports
-                    start_cmd = (
-                        svc["start_cmd"]()
-                        if callable(svc["start_cmd"])
-                        else svc["start_cmd"]
-                    )
-                    start_label = svc["start_label"].format(
-                        port=(
-                            default_webserver_port
-                            if svc["id"] == "web-server"
-                            else default_telnet_port
-                        )
-                    )
-                    menuitem = self.network_menu.Append(
-                        wx.ID_ANY, start_label, svc.get("start_tip", "")
-                    )
-                    self.Bind(wx.EVT_MENU, run_command(start_cmd), id=menuitem.GetId())
-
-                if svc.get("append_separator_after"):
-                    self.network_menu.AppendSeparator()
-
-        populate()
-
     def __set_help_menu(self):
         # ==========
         # HELP MENU
@@ -4941,8 +4679,8 @@ class MeerK40t(MWindow):
                         win = win.GetParent()
             if section is None or section == "":
                 section = "GUI"
-            section = section.lower()
-            url = f"https://github.com/meerk40t/meerk40t/wiki/Online-Help-{section}"
+            section = section.upper()
+            url = f"https://github.com/meerk40t/meerk40t/wiki/Online-Help:-{section}"
             import webbrowser
 
             webbrowser.open(url, new=0, autoraise=True)
@@ -5250,15 +4988,11 @@ class MeerK40t(MWindow):
                 return True  # VETO
         for job in self.context.device.spooler.queue:
             if job.is_running():
-                print(
-                    f"{job.label if hasattr(job, 'label') else 'Unknown Job'} was still running, stopping..."
-                )
+                print(f"{job.label} was still running, stopping...")
                 try:
                     job.stop()
                 except Exception as e:
-                    print(
-                        f"Error stopping job {job.label if hasattr(job, 'label') else 'Unknown Job'}: {e}"
-                    )
+                    print(f"Error stopping job {job.label}: {e}")
         return False
 
     def window_close(self):
@@ -5439,7 +5173,7 @@ class MeerK40t(MWindow):
     @signal_listener("pipe;usb_status")
     def on_usb_state_text(self, origin, value):
         self.main_statusbar.SetStatusText(
-            _("Laser: {index}").format(index=value),
+            _("Usb: {index}").format(index=value),
             1,
         )
 
@@ -5503,7 +5237,7 @@ class MeerK40t(MWindow):
                 )
                 if elements.classify_new:
                     elements.classify([node])
-            elements.refresh_signal()
+            self.context.signal("refresh_scene", "Scene")
 
     @signal_listener("statusmsg")
     def on_update_statusmsg(self, origin, value):
@@ -5537,8 +5271,6 @@ class MeerK40t(MWindow):
         )
         if self.needs_saving:
             title += "(*)"
-        # Example GUI tweak: remove the next line anytime (demo only).
-        title += " — example edit"
         self.SetTitle(title)
 
     def __set_properties(self):
@@ -5561,8 +5293,6 @@ class MeerK40t(MWindow):
         """
         if os.path.exists(filename):
             try:
-                if self.context.clear_on_load_recent:
-                    self.clear_project(ops_too=True)
                 self.load(filename, execution=True)
                 self.set_working_file_name(filename)
             except PermissionError:
@@ -5595,7 +5325,6 @@ class MeerK40t(MWindow):
             except IndexError:
                 preferred_loader = None
             pathname = fileDialog.GetPath()
-            self.context.elements.last_file_dir = os.path.dirname(pathname)
             self.load(pathname, preferred_loader, execution=True)
 
     def populate_recent_menu(self):
@@ -5636,31 +5365,15 @@ class MeerK40t(MWindow):
                     id=menuitem.GetId(),
                 )
 
-        def set_clear_flag(event):
-            self.context.clear_on_load_recent = not self.context.clear_on_load_recent
-
         if self.recent_file_menu.MenuItemCount != 0:
             self.recent_file_menu_item.Enable(True)
             self.recent_file_menu.AppendSeparator()
-            item_clear_on_load = self.recent_file_menu.Append(
-                wx.ID_ANY,
-                _("Clear project on load"),
-                _("Clear the project before loading a recent file"),
-                wx.ITEM_CHECK,
-            )
-            item_clear_on_load.Check(self.context.clear_on_load_recent)
-            self.Bind(wx.EVT_MENU, set_clear_flag, id=item_clear_on_load.GetId())
-            self.recent_file_menu.AppendSeparator()
-            item_clear_history = self.recent_file_menu.Append(
+            menuitem = self.recent_file_menu.Append(
                 wx.ID_ANY,
                 _("Clear Recent"),
                 _("Delete the list of recent projects"),
             )
-            self.Bind(
-                wx.EVT_MENU,
-                lambda e: self.clear_recent(),
-                id=item_clear_history.GetId(),
-            )
+            self.Bind(wx.EVT_MENU, lambda e: self.clear_recent(), id=menuitem.GetId())
         else:
             self.recent_file_menu_item.Enable(False)
 
@@ -5702,7 +5415,7 @@ class MeerK40t(MWindow):
 
     def clear_and_open(self, pathname, preferred_loader=None):
         self.clear_project(ops_too=False)
-        if self.load(pathname, preferred_loader, execution=True, replace_ops=True):
+        if self.load(pathname, preferred_loader, execution=True):
             try:
                 if self.context.uniform_svg and pathname.lower().endswith("svg"):
                     # or (len(elements) > 0 and "meerK40t" in elements[0].values):
@@ -5712,7 +5425,7 @@ class MeerK40t(MWindow):
             except AttributeError:
                 pass
 
-    def load(self, pathname, preferred_loader=None, execution=False, **kwargs):
+    def load(self, pathname, preferred_loader=None, execution=False):
         def unescaped(filename):
             OS_NAME = platform.system()
             if OS_NAME == "Windows":
@@ -5833,7 +5546,6 @@ class MeerK40t(MWindow):
                 channel=self.context.channel("load"),
                 svg_ppi=self.context.elements.svg_ppi,
                 preferred_loader=preferred_loader,
-                **kwargs,
             )
             kernel.busyinfo.end()
             if post_process:
@@ -5935,7 +5647,7 @@ class MeerK40t(MWindow):
                 return True
             return False
 
-    def on_drop_file(self, event=None):
+    def on_drop_file(self, event):
         """
         Drop file handler
 
@@ -5961,7 +5673,7 @@ class MeerK40t(MWindow):
             dlg.ShowModal()
             dlg.Destroy()
 
-    def on_size(self, event=None):
+    def on_size(self, event):
         if self.context is None:
             return
         self.Layout()
@@ -5969,7 +5681,7 @@ class MeerK40t(MWindow):
             zl = self.context.zoom_margin
             self.context(f"scene focus -{zl}% -{zl}% {100 + zl}% {100 + zl}%\n")
 
-    def on_focus_lost(self, event=None):
+    def on_focus_lost(self, event):
         self.context("-laser\nend\n")
         # event.Skip()
 
@@ -5990,7 +5702,7 @@ class MeerK40t(MWindow):
     def on_click_pause(self, event=None):
         self.context("pause\n")
 
-    def on_click_save(self, event=None):
+    def on_click_save(self, event):
         self.context(".dialog_save\n")
         self.context(".tool none\n")
 
@@ -6097,7 +5809,7 @@ class MeerK40t(MWindow):
             print("DoGiveHelp called but still no help text")
         self.DoGiveHelp_called = True
 
-    def on_menu_open(self, event=None):
+    def on_menu_open(self, event):
         def undo_label():
             s = _("&Undo\tCtrl-Z")
             t = self.context.elements.undo.undo_string()
@@ -6134,13 +5846,13 @@ class MeerK40t(MWindow):
             if title:
                 self.update_statusbar(title + "...")
 
-    def on_menu_close(self, event=None):
+    def on_menu_close(self, event):
         self.menus_open -= 1
         if self.menus_open <= 0:
             self.top_menu = None
         self.status_update()
 
-    def on_menu_highlight(self, event=None):
+    def on_menu_highlight(self, event):
         try:
             menuid = event.GetId()
             menu = event.GetMenu()

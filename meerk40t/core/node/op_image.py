@@ -19,14 +19,12 @@ Methods:
     preprocess(context, matrix, plan): Preprocesses the operation for execution based on the provided context and matrix.
     as_cutobjects(closed_distance=15, passes=1): Generates cut objects for the image operation.
 """
-
 from copy import copy
 from math import isnan
 
 from meerk40t.constants import (
     RASTER_B2T,
     RASTER_CROSSOVER,
-    RASTER_DIAGONAL,
     RASTER_GREEDY_H,
     RASTER_GREEDY_V,
     RASTER_HATCH,
@@ -36,15 +34,14 @@ from meerk40t.constants import (
     RASTER_T2B,
 )
 from meerk40t.core.cutcode.rastercut import RasterCut
-from meerk40t.core.elements.element_types import elem_nodes, op_nodes
+from meerk40t.core.elements.element_types import *
 from meerk40t.core.node.node import Node
-from meerk40t.core.node.mixins import OperationMixin
 from meerk40t.core.parameters import Parameters
 from meerk40t.core.units import MM_PER_INCH, UNITS_PER_INCH, UNITS_PER_MM, Length
 from meerk40t.svgelements import Color, Path, Polygon
 
 
-class ImageOpNode(OperationMixin, Node, Parameters):
+class ImageOpNode(Node, Parameters):
     """
     Default object defining any operation done on the laser.
 
@@ -120,8 +117,6 @@ class ImageOpNode(OperationMixin, Node, Parameters):
             raster_dir = "GR|"
         elif self.raster_direction == RASTER_SPIRAL:
             raster_dir = "(.)"
-        elif self.raster_direction == RASTER_DIAGONAL:
-            raster_dir = "/"
         else:
             raster_dir = str(self.raster_direction)
         default_map["direction"] = f"{raster_swing}{raster_dir} "
@@ -199,77 +194,28 @@ class ImageOpNode(OperationMixin, Node, Parameters):
             return some_nodes
         return False
 
-    def drop_multi(self, drag_nodes, modify=True, flag=False):
-        """Drop multiple nodes at once for better performance"""
-        if not drag_nodes:
-            return False
-
-        elements_to_add = []
-        ops_to_move = []
-        references_to_move = []
-        success = False
-
-        for drag_node in drag_nodes:
-            if drag_node.type in op_nodes:
-                if modify:
-                    ops_to_move.append(drag_node)
-                success = True
-                continue
-
-            if drag_node.type == "reference":
-                # Check directly on the referenced node for as_image
-                if not hasattr(drag_node.node, "as_image"):
-                    continue
-                if modify:
-                    references_to_move.append(drag_node)
-                success = True
-                continue
-
-            if hasattr(drag_node, "as_image"):
-                if not drag_node.has_ancestor("branch reg"):
-                    if modify:
-                        elements_to_add.append(drag_node)
-                    success = True
-                continue
-
-            if drag_node.type in ("file", "group") and not drag_node.has_ancestor(
-                "branch reg"
-            ):
-                found = False
-                for e in drag_node.flat(elem_nodes):
-                    if hasattr(e, "as_image"):
-                        if modify:
-                            elements_to_add.append(e)
-                        found = True
-                if found:
-                    success = True
-                continue
-
-        if modify:
-            if ops_to_move:
-                self.insert_siblings(ops_to_move, fast=True)
-            if references_to_move:
-                self.append_children(references_to_move, fast=True)
-            if elements_to_add:
-                for elem in elements_to_add:
-                    self.add_reference(elem, pos=None if flag else 0, fast=True)
-
-        return success
+    def is_referenced(self, node):
+        for e in self.children:
+            if e is node:
+                return True
+            if hasattr(e, "node") and e.node is node:
+                return True
+        return False
 
     def valid_node_for_reference(self, node):
-        """Override to check for as_image attribute instead of type"""
         if hasattr(node, "as_image"):
             return True
         else:
             return False
 
-    def would_classify(self, node, fuzzy=False, fuzzydistance=100, usedefault=False):
+    def classify(self, node, fuzzy=False, fuzzydistance=100, usedefault=False):
         if self.is_referenced(node):
             # No need to add it again...
             return False, False, None
 
         feedback = []
         if hasattr(node, "as_image"):
+            self.add_reference(node)
             # Have classified and no more classification are needed
             feedback.append("stroke")
             feedback.append("fill")
@@ -324,7 +270,6 @@ class ImageOpNode(OperationMixin, Node, Parameters):
                 RASTER_GREEDY_H,
                 RASTER_CROSSOVER,
                 RASTER_SPIRAL,
-                RASTER_DIAGONAL,
             ):
                 scanlines = height_in_inches * dpi
                 if not self.bidirectional:
@@ -648,7 +593,7 @@ class ImageOpNode(OperationMixin, Node, Parameters):
                         settings=cutsettings,
                         passes=passes,
                         post_filter=image_filter,
-                        label=f"Pass {gray}: cutoff={skip_pixel} {'h' if horizontal else 'v'}",
+                        label=f"Pass {gray}: cutoff={skip_pixel}",
                         laserspot=dotwidth,
                         special=self._instructions,
                     )
@@ -686,14 +631,13 @@ class ImageOpNode(OperationMixin, Node, Parameters):
                             settings=cutsettings,
                             passes=passes,
                             post_filter=image_filter,
-                            label=f"Pass {gray}.2: cutoff={skip_pixel} {'h' if horizontal else 'v'}",
+                            label=f"Pass {gray}.2: cutoff={skip_pixel}",
                             laserspot=dotwidth,
                             special=self._instructions,
                         )
                         cut.path = path
                         cut.original_op = self.type
                         cutcodes.append(cut)
-                        horizontal = not horizontal  # revert back for next main pass
             else:
                 # Create Cut Object for regular image
                 image_filter = None
@@ -723,11 +667,9 @@ class ImageOpNode(OperationMixin, Node, Parameters):
                 if self.raster_direction in (
                     RASTER_CROSSOVER,
                     RASTER_SPIRAL,
-                    RASTER_DIAGONAL,
                 ):  # Crossover - need both
                     settings["raster_step_x"] = step_x
                     settings["raster_step_y"] = step_y
-
                 if (
                     self.raster_direction == RASTER_CROSSOVER
                     and "split_crossover" in self._instructions

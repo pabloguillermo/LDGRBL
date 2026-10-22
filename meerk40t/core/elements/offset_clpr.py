@@ -11,10 +11,6 @@ via the pyclipr library of Luke Parry
 def plugin(kernel, lifecycle=None):
     _ = kernel.translation
     if lifecycle == "invalidate":
-        ignore_offset = kernel.root.setting(bool, "ignore_clipper", False)
-        if ignore_offset:
-            # print ("Clipper offset plugin disabled by user setting.")
-            return True  # always invalidate aka dont use
         try:
             import pyclipr
         except ImportError:
@@ -31,7 +27,7 @@ def init_commands(kernel):
 
     from meerk40t.core.node.node import Linejoin, Node
     from meerk40t.core.units import UNITS_PER_PIXEL, Length
-    from meerk40t.core.geomstr import Geomstr
+    from meerk40t.tools.geomstr import Geomstr
 
     self = kernel.elements
 
@@ -625,7 +621,6 @@ def init_commands(kernel):
     from meerk40t.core.node.op_cut import CutOpNode
 
     CutOpNode.offset_routine = offset_path
-    kernel.add_capability("offset_routine", "Clipper")
 
     @self.console_argument(
         "offset",
@@ -698,21 +693,20 @@ def init_commands(kernel):
         c_off = ClipperOffset(interpolation=interpolation)
         c_off.add_nodes(data)
         c_off.process_data(offset, jointype=jointype, separate=separate)
-        with self.node_lock:
-            for geom in c_off.result_geometry():
-                if geom is not None:
-                    newnode = self.elem_branch.add(
-                        geometry=geom, type="elem path", stroke=default_stroke
-                    )
-                    newnode.stroke_width = UNITS_PER_PIXEL
-                    newnode.linejoin = Linejoin.JOIN_ROUND
-                    newnode.label = f"Offset: {Length(offset).length_mm}"
-                    data_out.append(newnode)
+        for geom in c_off.result_geometry():
+            if geom is not None:
+                newnode = self.elem_branch.add(
+                    geometry=geom, type="elem path", stroke=default_stroke
+                )
+                newnode.stroke_width = UNITS_PER_PIXEL
+                newnode.linejoin = Linejoin.JOIN_ROUND
+                newnode.label = f"Offset: {Length(offset).length_mm}"
+                data_out.append(newnode)
 
         # Newly created! Classification needed?
         if len(data_out) > 0:
             post.append(classify_new(data_out))
-            self.refresh_signal()
+            self.signal("refresh_scene", "Scene")
         return "elements", data_out
 
     # Pocketing
@@ -809,22 +803,21 @@ def init_commands(kernel):
             c_off.add_nodes(mydata)
             c_off.process_data(offset, jointype=jointype, separate=separate)
             mydata.clear()
-            with self.node_lock:
-                for geom in c_off.result_geometry():
-                    if geom is not None:
-                        newnode = self.elem_branch.add(
-                            geometry=geom, type="elem path", stroke=default_stroke
-                        )
-                        newnode.stroke_width = UNITS_PER_PIXEL
-                        newnode.linejoin = Linejoin.JOIN_ROUND
-                        newnode.label = f"Offset: {Length(offset).length_mm}"
-                        mydata.append(newnode)
-                        data_out.append(newnode)
+            for geom in c_off.result_geometry():
+                if geom is not None:
+                    newnode = self.elem_branch.add(
+                        geometry=geom, type="elem path", stroke=default_stroke
+                    )
+                    newnode.stroke_width = UNITS_PER_PIXEL
+                    newnode.linejoin = Linejoin.JOIN_ROUND
+                    newnode.label = f"Offset: {Length(offset).length_mm}"
+                    mydata.append(newnode)
+                    data_out.append(newnode)
 
         # Newly created! Classification needed?
         if len(data_out) > 0:
             post.append(classify_new(data_out))
-            self.refresh_signal()
+            self.signal("refresh_scene", "Scene")
         return "elements", data_out
 
     # ---- Let's add some CAG commands....
@@ -917,24 +910,20 @@ def init_commands(kernel):
         clipper.process_data(method=method, filltype=filltype)
         # _("Create clipper data")
         with self.undoscope("Create clipper data"):
-            with self.node_lock:
-                for geom in clipper.result_geometry():
-                    if geom is not None:
-                        simplified_geom = geom.simplify(tolerance=25)
-                        newnode = self.elem_branch.add(
-                            geometry=simplified_geom,
-                            type="elem path",
-                            stroke=firstnode.stroke,
-                        )
-                        newnode.stroke_width = UNITS_PER_PIXEL
-                        newnode.linejoin = Linejoin.JOIN_ROUND
-                        newnode.label = f"{long_method} of {firstnode.id if firstnode.label is None else firstnode.display_label()}"
-                        data_out.append(newnode)
+            for geom in clipper.result_geometry():
+                if geom is not None:
+                    newnode = self.elem_branch.add(
+                        geometry=geom, type="elem path", stroke=firstnode.stroke
+                    )
+                    newnode.stroke_width = UNITS_PER_PIXEL
+                    newnode.linejoin = Linejoin.JOIN_ROUND
+                    newnode.label = f"{long_method} of {firstnode.id if firstnode.label is None else firstnode.display_label()}"
+                    data_out.append(newnode)
 
             # Newly created! Classification needed?
             if len(data_out) > 0:
                 post.append(classify_new(data_out))
-                self.refresh_signal()
+                self.signal("refresh_scene", "Scene")
                 if not keep:
                     self.remove_nodes(data)
 

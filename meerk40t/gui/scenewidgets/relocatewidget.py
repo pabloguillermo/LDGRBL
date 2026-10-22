@@ -13,9 +13,9 @@ from meerk40t.gui.scene.widget import Widget
 
 
 class RelocateWidget(Widget):
-    def __init__(self, scene, x, y, **kwargs):
+    def __init__(self, scene, x, y):
         size = 10000
-        Widget.__init__(self, scene, x - size, y - size, x + size, y + size, **kwargs)
+        Widget.__init__(self, scene, x - size, y - size, x + size, y + size)
         self.bitmap = icons.icons8_center_of_gravity.GetBitmap()
 
     def hit(self):

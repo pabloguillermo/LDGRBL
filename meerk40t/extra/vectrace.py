@@ -15,7 +15,6 @@ def plugin(kernel, lifecycle=None):
             elements = kernel.root.elements
             path = Path(fill="black", stroke="blue")
             paths = []
-            # _("Vectrace")
             with elements.undoscope("Vectrace"):
                 for node in data:
                     matrix = node.matrix

@@ -1,6 +1,6 @@
 import math
 import platform
-from time import perf_counter, sleep
+from time import perf_counter
 
 import wx
 
@@ -8,7 +8,6 @@ from meerk40t.kernel import Job, signal_listener
 
 from ..core.cutcode.cubiccut import CubicCut
 from ..core.cutcode.cutcode import CutCode
-from ..core.cutcode.cutgroup import CutGroup
 from ..core.cutcode.dwellcut import DwellCut
 from ..core.cutcode.gotocut import GotoCut
 from ..core.cutcode.homecut import HomeCut
@@ -60,7 +59,6 @@ from .wxutils import (
     wxListBox,
     wxListCtrl,
     wxStaticText,
-    dispatch_to_main_thread,
 )
 from .zmatrix import ZMatrix
 
@@ -535,8 +533,6 @@ class CutcodePanel(wx.Panel):
             elif isinstance(e, QuadCut):
                 res = f"Quad: {e.start[0]:.0f}, {e.start[1]:.0f} - {e.end[0]:.0f}, {e.end[1]:.0f}"
                 res += f" (c={e.c()[0]:.0f}, {e.c()[1]:.0f})"
-            elif isinstance(e, CutGroup):
-                res = f"Group: {len(e)} items"
             else:
                 try:
                     res = e.__name__
@@ -789,12 +785,6 @@ class CutcodePanel(wx.Panel):
 
 
 class SimulationPanel(wx.Panel, Job):
-    """Simulation Panel - Preview your laser job before running it
-    **Technical Purpose:**
-    Provides job simulation and preview functionality before laser execution. Features checkbox, button, radio button controls for user interaction. Integrates with background, device;modified for enhanced functionality.
-    **End-User Perspective:**
-    This panel shows you exactly what will happen when you run your laser job. Preview the cutting path, timing, and results before starting."""
-
     def __init__(
         self,
         *args,
@@ -806,56 +796,25 @@ class SimulationPanel(wx.Panel, Job):
     ):
         kwds["style"] = kwds.get("style", 0) | wx.TAB_TRAVERSAL
         wx.Panel.__init__(self, *args, **kwds)
-
-        # Basic initialization
         self.parent = args[0]
         self.context = context
         self.context.themes.set_window_colors(self)
         self.SetHelpText("simulate")
 
-        # Initialize core attributes
         self.retries = 0
-        self._cancel_cache_calculate = False
         self.plan_name = plan_name
         self.auto_clear = auto_clear
-
-        # Initialize settings
-        self._initialize_settings()
-
-        # Initialize job and cutplan
-        self._initialize_job(plan_name)
-        self._initialize_cutplan(plan_name)
-
-        # Initialize UI components
-        self._initialize_ui_components()
-
-        # Setup layout
-        self._setup_layout()
-
-        # Bind events
-        self._bind_events()
-
-        # Initialize scene and widgets
-        self._initialize_scene()
-
-        # Final setup
-        self._finalize_initialization()
-
-    def _initialize_settings(self):
-        """Initialize display and simulation settings."""
+        # Display travel paths?
         self.display_travel = self.context.setting(bool, "display_travel", True)
         self.raster_as_image = self.context.setting(bool, "raster_as_image", True)
         self.laserspot_display = self.context.setting(bool, "laserspot_display", True)
         self.laserspot_width = None
         self.calc_laser_spot_width()
 
-    def _initialize_job(self, plan_name):
-        """Initialize job processing."""
         Job.__init__(self)
         self._playback_cuts = True
         self._cut_end_time = []
 
-        # Setup cache updater job
         self.update_job = Job(
             process=self.cache_updater,
             job_name="cache_updater",
@@ -864,81 +823,56 @@ class SimulationPanel(wx.Panel, Job):
             run_main=True,
         )
 
-        # Configure main job
         self.job_name = "simulate"
         self.run_main = True
         self.process = self.animate_sim
         self.interval = 0.1
-
-    def _initialize_cutplan(self, plan_name):
-        """Initialize cutplan data."""
-        # Setup cutplan
         if plan_name:
             self.cutplan = self.context.planner.get_or_make_plan(plan_name)
         else:
             self.cutplan = self.context.planner.default_plan
         self.plan_name = self.cutplan.name
         self.operations = self.cutplan.plan
-
-        # Process cutcode
+        # for e in self.operations:
+        #     print(f"Init: {type(e).__name__} {e}")
         self.cutcode = CutCode()
+
         for c in self.operations:
             if isinstance(c, CutCode):
                 self.cutcode.extend(c)
         self.cutcode = CutCode(self.cutcode.flat())
 
-        # Calculate statistics
         self.statistics = self.cutcode.provide_statistics()
+
         self.max = max(len(self.cutcode), 0) + 1
         self.progress = self.max
-
-    def _initialize_ui_components(self):
-        """Initialize all UI components."""
-        self._initialize_view_pane()
-        self._initialize_slide_button()
-        self._initialize_optimization_panels()
-        self._initialize_notebook()
-        self._initialize_controls()
-        self._initialize_text_fields()
-        self._initialize_buttons_and_sliders()
-
-    def _initialize_view_pane(self):
-        """Initialize the main view pane and scene."""
         self.view_pane = ScenePanel(
             self.context,
             self,
             scene_name="SimScene",
-            with_snap=False,
             style=wx.EXPAND,
         )
         self.view_pane.start_scene()
         self.view_pane.SetCanFocus(False)
         self.widget_scene = self.view_pane.scene
-
-    def _initialize_slide_button(self):
-        """Initialize the slide-out options button."""
+        # poor mans slide out
         self.btn_slide_options = wxButton(self, wx.ID_ANY, "<")
         self.btn_slide_options.Bind(wx.EVT_BUTTON, self.slide_out)
         self.btn_slide_options.SetToolTip(
             _("Show/Hide optimization options for this job.")
         )
-
-    def _initialize_optimization_panels(self):
-        """Initialize optimization-related panels."""
         from copy import copy
 
-        prechoices = copy(self.context.lookup("choices/optimize"))
+        prechoices = copy(context.lookup("choices/optimize"))
         choices = list(map(copy, prechoices))
         # Clear the page-entry
         for entry in choices:
             entry["page"] = ""
-
         self.subpanel_optimize = wx.Panel(self, wx.ID_ANY)
         self.options_optimize = ChoicePropertyPanel(
             self, wx.ID_ANY, context=self.context, choices=choices, scrolling=False
         )
         self.options_optimize.SetupScrolling()
-
         self.subpanel_operations = OperationsPanel(
             self, wx.ID_ANY, context=self.context, cutplan=self.cutplan
         )
@@ -946,46 +880,31 @@ class SimulationPanel(wx.Panel, Job):
             self, wx.ID_ANY, context=self.context, cutcode=None, plan_name=None
         )
 
-    def _initialize_notebook(self):
-        """Initialize the notebook for different panels."""
         self.panel_optimize = wx.Notebook(self, wx.ID_ANY)
         self.context.themes.set_window_colors(self.panel_optimize)
 
         self.subpanel_optimize.Reparent(self.panel_optimize)
         self.subpanel_operations.Reparent(self.panel_optimize)
         self.subpanel_cutcode.Reparent(self.panel_optimize)
-
         self.panel_optimize.AddPage(self.subpanel_optimize, _("Optimizations"))
         self.panel_optimize.AddPage(self.subpanel_operations, _("Operations"))
         self.panel_optimize.AddPage(self.subpanel_cutcode, _("Cutcode"))
-
-    def _initialize_controls(self):
-        """Initialize checkboxes and buttons."""
         self.checkbox_optimize = wxCheckBox(self, wx.ID_ANY, _("Optimize"))
         self.checkbox_optimize.SetToolTip(_("Enable/Disable Optimize"))
         self.checkbox_optimize.SetValue(self.context.planner.do_optimization)
-
         self.btn_redo_it = wxButton(self, wx.ID_ANY, _("Recalculate"))
         self.btn_redo_it.Bind(wx.EVT_BUTTON, self.on_redo_it)
         self.btn_redo_it.SetToolTip(_("Apply the settings and recalculate the cutplan"))
 
-    def _initialize_text_fields(self):
-        """Initialize all text control fields."""
         self.slider_progress = wx.Slider(self, wx.ID_ANY, self.max, 0, self.max)
         self.slider_progress.SetFocus()
-
-        # Distance fields
         self.text_distance_laser = TextCtrl(self, wx.ID_ANY, "", style=wx.TE_READONLY)
         self.text_distance_travel = TextCtrl(self, wx.ID_ANY, "", style=wx.TE_READONLY)
         self.text_distance_total = TextCtrl(self, wx.ID_ANY, "", style=wx.TE_READONLY)
-
-        # Time fields
         self.text_time_laser = TextCtrl(self, wx.ID_ANY, "", style=wx.TE_READONLY)
         self.text_time_travel = TextCtrl(self, wx.ID_ANY, "", style=wx.TE_READONLY)
         self.text_time_extra = TextCtrl(self, wx.ID_ANY, "", style=wx.TE_READONLY)
         self.text_time_total = TextCtrl(self, wx.ID_ANY, "", style=wx.TE_READONLY)
-
-        # Step fields
         self.text_distance_laser_step = TextCtrl(
             self, wx.ID_ANY, "", style=wx.TE_READONLY
         )
@@ -999,24 +918,16 @@ class SimulationPanel(wx.Panel, Job):
         self.text_time_travel_step = TextCtrl(self, wx.ID_ANY, "", style=wx.TE_READONLY)
         self.text_time_extra_step = TextCtrl(self, wx.ID_ANY, "", style=wx.TE_READONLY)
         self.text_time_total_step = TextCtrl(self, wx.ID_ANY, "", style=wx.TE_READONLY)
-
-    def _initialize_buttons_and_sliders(self):
-        """Initialize buttons and sliders."""
         self.button_play = wxButton(self, wx.ID_ANY, "")
         self.button_play.SetToolTip(_("Start the simulation replay"))
-
         self.slider_playbackspeed = wx.Slider(self, wx.ID_ANY, 180, 0, 310)
         self.slider_playbackspeed.SetToolTip(_("Set the speed for the simulation"))
-
         self.text_playback_speed = TextCtrl(
             self, wx.ID_ANY, "100%", style=wx.TE_READONLY
         )
-
-        # Radio buttons for playback mode
         self.radio_cut = wx.RadioButton(self, wx.ID_ANY, _("Steps"))
         self.radio_time_seconds = wx.RadioButton(self, wx.ID_ANY, _("Time (sec.)"))
         self.radio_time_minutes = wx.RadioButton(self, wx.ID_ANY, _("Time (min)"))
-
         self.radio_cut.SetToolTip(
             _(
                 "Cut operations Playback-Mode: play will jump from one completed operations to next"
@@ -1031,36 +942,22 @@ class SimulationPanel(wx.Panel, Job):
 
         self.button_spool = wxButton(self, wx.ID_ANY, _("Send to Laser"))
         self.button_spool.SetToolTip(_("Send the current cutplan to the laser."))
-        self.wait_info = wxStaticText(
-            self, wx.ID_ANY, _("Plan is still being processed"), style=wx.ALIGN_CENTER
-        )
-        self.wait_info.Hide()
+        self._slided_in = None
 
-        self.button_cancel_calculate = wxButton(self, wx.ID_ANY, _("Stop calculating"))
-        self.button_cancel_calculate.SetToolTip(
-            _(
-                "Stop building simulation preview paths. The plan stays loaded; "
-                "Recalculate rebuilds caches. Cancellation applies between cuts."
-            )
-        )
-        self.button_cancel_calculate.Hide()
-
-    def _setup_layout(self):
-        """Setup the layout of all UI components."""
         self.__set_properties()
         self.__do_layout()
 
-    def _bind_events(self):
-        """Bind all event handlers."""
+        self.matrix = Matrix()
+
+        self.previous_window_position = None
+        self.previous_scene_position = None
+        self._Buffer = None
+
         self.Bind(wx.EVT_SLIDER, self.on_slider_progress, self.slider_progress)
         self.Bind(wx.EVT_BUTTON, self.on_button_play, self.button_play)
         self.Bind(wx.EVT_SLIDER, self.on_slider_playback, self.slider_playbackspeed)
+        # self.Bind(wx.EVT_COMBOBOX, self.on_combo_device, self.combo_device)
         self.Bind(wx.EVT_BUTTON, self.on_button_spool, self.button_spool)
-        self.Bind(
-            wx.EVT_BUTTON,
-            self.on_button_cancel_calculate,
-            self.button_cancel_calculate,
-        )
         self.Bind(wx.EVT_RIGHT_DOWN, self.on_mouse_right_down)
         self.Bind(wx.EVT_RADIOBUTTON, self.on_radio_playback_mode, self.radio_cut)
         self.Bind(
@@ -1074,10 +971,9 @@ class SimulationPanel(wx.Panel, Job):
         # end wxGlade
         self.Bind(wx.EVT_CHECKBOX, self.on_checkbox_optimize, self.checkbox_optimize)
         self.on_checkbox_optimize(None)
+
         self.Bind(wx.EVT_SIZE, self.on_size)
 
-    def _initialize_scene(self):
-        """Initialize the scene and all scene widgets."""
         ##############
         # BUILD SCENE
         ##############
@@ -1086,7 +982,6 @@ class SimulationPanel(wx.Panel, Job):
         self.sim_cutcode.raster_as_image = self.raster_as_image
         self.sim_cutcode.laserspot_width = self.laserspot_width
         self.widget_scene.add_scenewidget(self.sim_cutcode)
-
         self.sim_travel = SimulationTravelWidget(self.widget_scene, self)
         self.sim_travel.display = self.display_travel
         self.widget_scene.add_scenewidget(self.sim_travel)
@@ -1104,17 +999,12 @@ class SimulationPanel(wx.Panel, Job):
             self.grid.tick_distance = 0.5
         elif self.context.units_name == "mil":
             self.grid.tick_distance = 500
-
         self.widget_scene.add_scenewidget(self.grid)
         self.widget_scene.add_scenewidget(
             BedWidget(self.widget_scene, name="Simulation")
         )
         self.widget_scene.add_interfacewidget(SimReticleWidget(self.widget_scene, self))
-
         self.parent.add_module_delegate(self.options_optimize)
-
-    def _finalize_initialization(self):
-        """Finalize the initialization process."""
         self.context.setting(int, "simulation_mode", 0)
         default = self.context.simulation_mode
         if default == 0:
@@ -1123,17 +1013,14 @@ class SimulationPanel(wx.Panel, Job):
             self.radio_time_seconds.SetValue(True)
         elif default == 2:
             self.radio_time_minutes.SetValue(True)
-
         self.on_radio_playback_mode(None)
-
         # Allow Scene update from now on (are suppressed by default during startup phase)
         self.widget_scene.suppress_changes = False
-
         # self.Show()
         self.running = False
         self.slided_in = True
         self.start_time = perf_counter()
-        self.debug(f"Init done: {perf_counter() - self.start_time}")
+        self.debug(f"Init done: {perf_counter()-self.start_time}")
 
     def reload_statistics(self):
         try:
@@ -1150,7 +1037,7 @@ class SimulationPanel(wx.Panel, Job):
         return
 
     def _startup(self):
-        self.debug(f"Startup: {perf_counter() - self.start_time}")
+        self.debug(f"Startup: {perf_counter()-self.start_time}")
         self.slided_in = True
         self.fit_scene_to_panel()
 
@@ -1321,9 +1208,7 @@ class SimulationPanel(wx.Panel, Job):
         h_sizer_buttons.Add(sizer_speed_options, 1, wx.EXPAND, 0)
         # sizer_execute.Add(self.combo_device, 0, wx.EXPAND, 0)
         sizer_execute.Add(self.button_spool, 1, wx.EXPAND, 0)
-        sizer_execute.Add(self.button_cancel_calculate, 0, wx.EXPAND, 0)
         h_sizer_buttons.Add(sizer_execute, 1, wx.EXPAND, 0)
-        v_sizer_main.Add(self.wait_info, 0, wx.EXPAND, 0)
         v_sizer_main.Add(self.hscene_sizer, 1, wx.EXPAND, 0)
         v_sizer_main.Add(h_sizer_scroll, 0, wx.EXPAND, 0)
         v_sizer_main.Add(h_sizer_text_1, 0, wx.EXPAND, 0)
@@ -1669,7 +1554,7 @@ class SimulationPanel(wx.Panel, Job):
         self.interval = factor * 100.0 / float(value)
 
     def _refresh_simulated_plan(self):
-        self.debug(f"Refresh simulated: {perf_counter() - self.start_time}")
+        self.debug(f"Refresh simulated: {perf_counter()-self.start_time}")
         # Stop animation
         if self.running:
             self._stop()
@@ -1681,24 +1566,6 @@ class SimulationPanel(wx.Panel, Job):
             self.cutplan = self.context.planner.get_or_make_plan(self.plan_name)
         else:
             self.cutplan = self.context.planner.default_plan
-
-        try:
-            self.show_wait(True)
-            counter = 0
-            while not (
-                self.IsBeingDeleted()
-                or self.context.planner.is_finished(self.plan_name)
-            ):
-                counter += 1
-                # print (f"Waiting for plan to be ready {counter} ")
-                sleep(0.5)
-                wx.YieldIfNeeded()
-            self.show_wait(False)
-        except RuntimeError:
-            # Was already deleted
-            return
-        if self.IsBeingDeleted():
-            return
         self.plan_name = self.cutplan.name
         self.operations = self.cutplan.plan
         self.subpanel_cutcode.set_cutcode_entry(None, self.plan_name)
@@ -1747,17 +1614,16 @@ class SimulationPanel(wx.Panel, Job):
 
     @signal_listener("device;modified")
     @signal_listener("plan")
-    @dispatch_to_main_thread
-    def on_plan_change(self, origin, plan_name=None, status=None, **kwargs):
+    def on_plan_change(self, origin, plan_name=None, status=None):
         def resend_signal():
-            self.debug(f"Resending signal: {perf_counter() - self.start_time}")
+            self.debug(f"Resending signal: {perf_counter()-self.start_time}")
             self.context.signal("plan", plan_name=self.plan_name, status=1)
 
         winsize = self.view_pane.GetSize()
         winsize1 = self.hscene_sizer.GetSize()
         winsize2 = self.GetSize()
         self.debug(
-            f"Plan called : {perf_counter() - self.start_time} (Pane: {winsize}, Sizer: {winsize1}, Window: {winsize2})"
+            f"Plan called : {perf_counter()-self.start_time} (Pane: {winsize}, Sizer: {winsize1}, Window: {winsize2})"
         )
         if plan_name == self.plan_name:
             # This may come too early before all things have been done
@@ -1788,17 +1654,7 @@ class SimulationPanel(wx.Panel, Job):
 
     @signal_listener("refresh_simulation")
     def on_request_refresh(self, origin, *args):
-        # request_refresh is thread safe
         self.widget_scene.request_refresh()
-
-    def show_wait(self, flag):
-        self.wait_info.Show(flag)
-        sizer = self.GetSizer()
-        if sizer:
-            sizer.Layout()
-        self.Layout()
-        self.Refresh()
-        wx.YieldIfNeeded()
 
     def on_radio_playback_mode(self, event):
         self._playback_cuts = self.radio_cut.GetValue()
@@ -1818,25 +1674,6 @@ class SimulationPanel(wx.Panel, Job):
         else:
             self.options_optimize.Enable(False)
 
-    def on_button_cancel_calculate(self, event=None):
-        self._cancel_cache_calculate = True
-        if event is not None:
-            event.Skip()
-
-    def _finish_cache_calculate_ui(self, spool_label):
-        try:
-            self.button_cancel_calculate.Hide()
-            self.button_cancel_calculate.Enable(False)
-            self.button_spool.SetLabel(spool_label)
-            self.button_spool.Enable(True)
-        except RuntimeError:
-            pass
-        try:
-            self.Layout()
-            wx.YieldIfNeeded()
-        except RuntimeError:
-            pass
-
     def cache_updater(self):
         try:
             self.button_spool.Enable(False)
@@ -1844,40 +1681,29 @@ class SimulationPanel(wx.Panel, Job):
             # Control no longer existant
             return
         msg = self.button_spool.GetLabel()
-        self._cancel_cache_calculate = False
+        self.button_spool.SetLabel(_("Calculating"))
+        for cut in self.cutcode:
+            if isinstance(cut, (RasterCut, PlotCut)):
+                if hasattr(cut, "_plotcache") and cut._plotcache is not None:
+                    continue
+                if isinstance(cut, RasterCut):
+                    try:
+                        cut._plotcache = list(cut.plot.plot())
+                    except MemoryError:
+                        cut._plotcache = None
+                elif isinstance(cut, PlotCut):
+                    try:
+                        cut._plotcache = list(cut.plot)
+                    except MemoryError:
+                        cut._plotcache = None
+                self.context.signal("refresh_scene", self.widget_scene.name)
+        self.reload_statistics()
         try:
-            self.button_spool.SetLabel(_("Calculating"))
-            self.button_cancel_calculate.Show()
-            self.button_cancel_calculate.Enable(True)
-            self.Layout()
-            wx.YieldIfNeeded()
+            self.button_spool.SetLabel(msg)
+            self.button_spool.Enable(True)
         except RuntimeError:
-            self._finish_cache_calculate_ui(msg)
-            return
-
-        try:
-            for cut in self.cutcode:
-                wx.YieldIfNeeded()
-                if self._cancel_cache_calculate:
-                    break
-                if isinstance(cut, (RasterCut, PlotCut)):
-                    if hasattr(cut, "_plotcache") and cut._plotcache is not None:
-                        continue
-                    if isinstance(cut, RasterCut):
-                        try:
-                            cut._plotcache = list(cut.plot.plot())
-                        except MemoryError:
-                            cut._plotcache = None
-                    elif isinstance(cut, PlotCut):
-                        try:
-                            cut._plotcache = list(cut.plot)
-                        except MemoryError:
-                            cut._plotcache = None
-                    self.context.signal("refresh_scene", self.widget_scene.name)
-                    wx.YieldIfNeeded()
-            self.reload_statistics()
-        finally:
-            self._finish_cache_calculate_ui(msg)
+            # No longer existing
+            pass
 
     def update_fields(self):
         def len_str(value):
@@ -2020,8 +1846,8 @@ class SimulationPanel(wx.Panel, Job):
         self.btn_redo_it.Enable(False)
         self.btn_redo_it.Refresh()
         self.btn_redo_it.Update()
-        # busy = self.context.kernel.busyinfo
-        # busy.start(msg=_("Preparing simulation..."))
+        busy = self.context.kernel.busyinfo
+        busy.start(msg=_("Preparing simulation..."))
 
         plan = self.plan_name
         if self.checkbox_optimize.GetValue():
@@ -2030,12 +1856,11 @@ class SimulationPanel(wx.Panel, Job):
         else:
             opt = ""
             self.context.planner.do_optimization = False
-        self.show_wait(True)
         self.context.signal("optimize", self.context.planner.do_optimization)
         self.context(
-            f"plan{plan} clear\nthreaded plan{plan} copy preprocess validate blob{opt} finish\n"
+            f"plan{plan} clear\nplan{plan} copy preprocess validate blob{opt}\n"
         )
-        # busy.end()
+        busy.end()
         self._refresh_simulated_plan()
         self.btn_redo_it.Enable(True)
         self.btn_redo_it.SetLabel(_("Recalculate"))
@@ -2055,7 +1880,7 @@ class SimulationPanel(wx.Panel, Job):
 
     def pane_hide(self):
         if self.auto_clear:
-            self.context(f"plan{self.plan_name} clear finish\n")
+            self.context(f"plan{self.plan_name} clear\n")
         self.context.close("SimScene")
         self.context.unschedule(self)
         self.running = False
@@ -2074,7 +1899,6 @@ class SimulationPanel(wx.Panel, Job):
         @param args:
         @return:
         """
-        # request_refresh is thread safe
         if scene_name == "SimScene":
             self.request_refresh()
 
@@ -2149,8 +1973,8 @@ class SimulationWidget(Widget):
     done such that both progress of 0 and 1 render nothing and items begin to draw at 2.
     """
 
-    def __init__(self, scene, sim, **kwargs):
-        Widget.__init__(self, scene, all=False, **kwargs)
+    def __init__(self, scene, sim):
+        Widget.__init__(self, scene, all=False)
         self.renderer = LaserRender(self.scene.context)
         self.sim = sim
         self.matrix.post_cat(~scene.context.device.view.matrix)
@@ -2323,8 +2147,8 @@ class SimulationTravelWidget(Widget):
     within the simulation scene.
     """
 
-    def __init__(self, scene, sim, **kwargs):
-        Widget.__init__(self, scene, all=False, **kwargs)
+    def __init__(self, scene, sim):
+        Widget.__init__(self, scene, all=False)
         self.sim_matrix = ~scene.context.device.view.matrix
         self.sim = sim
         self.matrix.post_cat(~scene.context.device.view.matrix)
@@ -2456,8 +2280,8 @@ class SimReticleWidget(Widget):
     the end of the current cut object.
     """
 
-    def __init__(self, scene, sim, **kwargs ):
-        Widget.__init__(self, scene, all=False, **kwargs)
+    def __init__(self, scene, sim):
+        Widget.__init__(self, scene, all=False)
         self.sim_matrix = ~scene.context.device.view.matrix
         self.sim = sim
 
@@ -2565,21 +2389,15 @@ class Simulation(MWindow):
     def sub_register(kernel):
         def handler(opt):
             optpart = " preopt optimize" if opt else ""
-            hold = kernel.root.setting(bool, "laserpane_hold", False)
-            plan_name = (
-                kernel.root.setting(str, "laserpane_plan", "z")
-                or kernel.planner.get_last_plan()
+
+            busy = kernel.busyinfo
+            busy.change(msg=_("Preparing simulation..."))
+            busy.start()
+
+            kernel.console(
+                f"planz clear copy preprocess validate blob{optpart}\nwindow toggle Simulation z\n"
             )
-            # busy = kernel.busyinfo
-            # busy.change(msg=_("Preparing simulation..."))
-            # busy.start()
-            if not (hold and kernel.planner.has_content(plan_name)):
-                plan_name = kernel.planner.get_free_plan()
-                kernel.console(
-                    f"threaded plan{plan_name} clear copy preprocess validate blob{optpart} finish\n"
-                )
-            kernel.console(f"window open Simulation {plan_name}\n")
-            # busy.end()
+            busy.end()
 
         def open_simulator(*args):
             opt = kernel.planner.do_optimization
@@ -2614,9 +2432,8 @@ class Simulation(MWindow):
         yield self.panel
 
     @signal_listener("background")
-    @dispatch_to_main_thread
-    def on_background_signal(self, origin, background, **kwargs):
-        if background is not None and not isinstance(background, wx.Bitmap):
+    def on_background_signal(self, origin, background):
+        if background is not None:
             background = wx.Bitmap.FromBuffer(*background)
         self.panel.widget_scene._signal_widget(
             self.panel.widget_scene.widget_root, "background", background

@@ -5,7 +5,7 @@ from meerk40t.core.laserjob import LaserJob
 from meerk40t.core.spoolers import Spooler
 from meerk40t.core.units import Length
 from meerk40t.core.view import View
-from meerk40t.device.devicechoices import get_effect_choices, get_operation_choices
+from meerk40t.device.devicechoices import get_effect_choices
 from meerk40t.device.mixins import Status
 from meerk40t.kernel import CommandSyntaxError, Service, signal_listener
 from meerk40t.newly.driver import NewlyDriver
@@ -28,10 +28,6 @@ class NewlyDevice(Service, Status):
                 default = c.get("default")
                 if attr is not None and default is not None:
                     setattr(self, attr, default)
-
-        # This device prefers to display power level in percent
-        self.setting(bool, "use_percent_for_power_display", True)
-        self.setting(bool, "use_mm_min_for_speed_display", False)
 
         _ = kernel.translation
         choices = [
@@ -112,15 +108,6 @@ class NewlyDevice(Service, Status):
         self.register_choices("newly-speedchart", choices)
 
         self.register_choices("newly-effects", get_effect_choices(self))
-        self.register_choices(
-            "newly-defaults",
-            get_operation_choices(
-                self,
-                default_cut_speed=5,
-                default_engrave_speed=25,
-                default_raster_speed=250,
-            ),
-        )
 
         choices = [
             {
@@ -138,7 +125,7 @@ class NewlyDevice(Service, Status):
                 "attr": "bedwidth",
                 "object": self,
                 "default": "310mm",
-                "type": Length,
+                "type": str,
                 "label": _("Width"),
                 "tip": _("Width of the laser bed."),
                 # Hint for translation _("General")
@@ -152,7 +139,7 @@ class NewlyDevice(Service, Status):
                 "attr": "bedheight",
                 "object": self,
                 "default": "210mm",
-                "type": Length,
+                "type": str,
                 "label": _("Height"),
                 "tip": _("Height of the laser bed."),
                 # Hint for translation _("General")
@@ -487,26 +474,15 @@ class NewlyDevice(Service, Status):
         ]
         self.register_choices("newly-specific", choices)
 
-        def _use_percent_for_power():
-            return getattr(self, "use_percent_for_power_display", True)
-
-        def _use_minute_for_speed():
-            return getattr(self, "use_mm_min_for_speed_display", False)
-
         choices = [
             {
                 "attr": "default_cut_speed",
                 "object": self,
                 "default": 15.0,
                 "type": float,
-                "style": "speed",
-                "perminute": _use_minute_for_speed,
+                "trailer": "mm/s",
                 "label": _("Cut Speed"),
-                "tip": _("How fast do we cut?")
-                + "\n"
-                + _(
-                    "This is global setting that will be overruled by operation settings."
-                ),
+                "tip": _("How fast do we cut?"),
                 # Hint for translation _("Cut")
                 "subsection": "_10_Cut",
             },
@@ -515,14 +491,9 @@ class NewlyDevice(Service, Status):
                 "object": self,
                 "default": 1000.0,
                 "type": float,
-                "style": "power",
-                "percent": _use_percent_for_power,
                 "label": _("Cut Power"),
-                "tip": _("What power level do we cut at?")
-                + "\n"
-                + _(
-                    "This is global setting that will be overruled by operation settings."
-                ),
+                "trailer": "/1000",
+                "tip": _("What power level do we cut at?"),
                 # Hint for translation _("Cut")
                 "subsection": "_10_Cut",
             },
@@ -553,14 +524,9 @@ class NewlyDevice(Service, Status):
                 "object": self,
                 "default": 200.0,
                 "type": float,
-                "style": "speed",
-                "perminute": _use_minute_for_speed,
+                "trailer": "mm/s",
                 "label": _("Raster Speed"),
-                "tip": _("How fast do we raster?")
-                + "\n"
-                + _(
-                    "This is global setting that will be overruled by operation settings."
-                ),
+                "tip": _("How fast do we raster?"),
                 # Hint for translation _("Raster")
                 "subsection": "_30_Raster",
             },
@@ -571,11 +537,7 @@ class NewlyDevice(Service, Status):
                 "type": float,
                 "label": _("Raster Power"),
                 "trailer": "%",
-                "tip": _("At what power level do we raster?")
-                + "\n"
-                + _(
-                    "This is global setting that will be overruled by operation settings."
-                ),
+                "tip": _("At what power level do we raster?"),
                 # Hint for translation _("Raster")
                 "subsection": "_30_Raster",
             },
@@ -584,8 +546,7 @@ class NewlyDevice(Service, Status):
                 "object": self,
                 "default": 100.0,
                 "type": float,
-                "style": "speed",
-                "perminute": _use_minute_for_speed,
+                "trailer": "mm/s",
                 "label": _("Moving Speed"),
                 "tip": _("Moving speed while not cutting?"),
                 # Hint for translation _("Moving")
@@ -596,8 +557,7 @@ class NewlyDevice(Service, Status):
                 "object": self,
                 "default": 20.0,
                 "type": float,
-                "style": "speed",
-                "perminute": _use_minute_for_speed,
+                "trailer": "mm/s",
                 "label": _("Corner Speed"),
                 "tip": _("Speed to move from acceleration corner to corner?"),
                 # Hint for translation _("Moving")
@@ -619,8 +579,7 @@ class NewlyDevice(Service, Status):
                 "object": self,
                 "default": 100.0,
                 "type": float,
-                "style": "speed",
-                "perminute": _use_minute_for_speed,
+                "trailer": "mm/s",
                 "label": _("Rect Speed"),
                 "tip": _("Speed to perform frame trace?"),
                 # Hint for translation _("Framing")
@@ -631,8 +590,7 @@ class NewlyDevice(Service, Status):
                 "object": self,
                 "default": 0.0,
                 "type": float,
-                "style": "power",
-                "percent": _use_percent_for_power,
+                "trailer": "/1000",
                 "label": _("Rect Power"),
                 "tip": _("Power usage for draw frame operation?"),
                 # Hint for translation _("Framing")
@@ -658,6 +616,9 @@ class NewlyDevice(Service, Status):
             },
         ]
         self.register_choices("coolant", choices)
+
+        # This device prefers to display power level in percent
+        self.setting(bool, "use_percent_for_power_display", True)
 
         # Tuple contains 4 value pairs: Speed Low, Speed High, Power Low, Power High, each with enabled, value
         self.setting(
@@ -743,7 +704,7 @@ class NewlyDevice(Service, Status):
         @self.console_argument("time", type=float, help=_("laser fire pulse duration"))
         @self.console_command(
             "pulse",
-            help="pulse <time> : " + _("Pulse the laser in place."),
+            help=_("pulse <time>: Pulse the laser in place."),
         )
         def pulse(
             command, channel, _, time=None, power=None, idonotlovemyhouse=False, **kwgs
@@ -995,11 +956,3 @@ class NewlyDevice(Service, Status):
 
     def cool_helper(self, choice_dict):
         self.kernel.root.coolant.coolant_choice_helper(self)(choice_dict)
-
-    def get_operation_defaults(self, operation_type: str) -> dict:
-        """
-        Returns the default settings for a specific operation type.
-        """
-        settings = self.get_operation_power_speed_defaults(operation_type)
-        # Anything additional for the operation type can be added here
-        return settings

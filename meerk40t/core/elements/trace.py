@@ -29,7 +29,7 @@ from random import randint, shuffle
 
 from meerk40t.core.units import Length
 from meerk40t.svgelements import Circle, Path, Point, Polyline
-from meerk40t.core.geomstr import Geomstr
+from meerk40t.tools.geomstr import Geomstr
 
 
 def plugin(kernel, lifecycle=None):
@@ -457,6 +457,12 @@ def init_commands(kernel):
         action="store_true",
         help=_("force the inclusion of non-assigned/non-active elements"),
     )
+    @self.console_option(
+        "dx", "x", type=Length, help=_("horizontal offset to apply to the trace")
+    )
+    @self.console_option(
+        "dy", "y", type=Length, help=_("vertical offset to apply to the trace")
+    )
     @self.console_command(
         "trace",
         help=_("trace the given elements"),
@@ -470,6 +476,8 @@ def init_commands(kernel):
         resolution=None,
         start=None,
         force=None,
+        dx=None,
+        dy=None,
         data=None,
         **kwargs,
     ):
@@ -542,6 +550,10 @@ def init_commands(kernel):
         if len(hull) == 0:
             channel(_("No elements bounds to trace."))
             return
+        if dx is not None or dy is not None:
+            ox = float(dx) if dx is not None else 0
+            oy = float(dy) if dy is not None else 0
+            hull = [(p[0] + ox, p[1] + oy) for p in hull]
 
         def run_shape(_spooler, startmethod, _hull):
             def trace_hull(startmethod=0):
@@ -641,11 +653,10 @@ def init_commands(kernel):
             if shape.is_degenerate():
                 channel(_("Shape is degenerate."))
                 return "elements", data
-        with self.node_lock:
-            node = self.elem_branch.add(shape=shape, type=shape_type)
-            node.stroke = self.default_stroke
-            node.stroke_width = self.default_strokewidth
-            node.fill = self.default_fill
+        node = self.elem_branch.add(shape=shape, type=shape_type)
+        node.stroke = self.default_stroke
+        node.stroke_width = self.default_strokewidth
+        node.fill = self.default_fill
         node.altered()
         self.set_emphasis([node])
         node.focus()

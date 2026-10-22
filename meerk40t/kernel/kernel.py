@@ -5,9 +5,6 @@ import re
 import subprocess
 import threading
 import time
-import ast
-import operator
-
 from datetime import datetime
 from threading import Thread
 from typing import Any, Callable, Generator, List, Optional, Tuple, Union
@@ -33,43 +30,6 @@ KERNEL_VERSION = "0.0.10"
 
 RE_ACTIVE = re.compile("service/(.*)/active")
 RE_AVAILABLE = re.compile("service/(.*)/available")
-
-# Supported operators
-SAFE_OPERATORS = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.FloorDiv: operator.floordiv,
-    ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
-    ast.USub: operator.neg,
-    ast.UAdd: operator.pos,
-}
-
-def safe_eval(expr, term, term_value):
-    """
-    Safely evaluate arithmetic expressions with <term> as a variable.
-    Supports ast.Constant and ast.Num for compatibility.
-    """
-    def _eval(node):
-        if isinstance(node, ast.Constant):  # Python 3.8+
-            return node.value
-        elif isinstance(node, ast.Num):  # Python <3.8
-            return node.n
-        elif isinstance(node, ast.BinOp):
-            return SAFE_OPERATORS[type(node.op)](
-                _eval(node.left), _eval(node.right)
-            )
-        elif isinstance(node, ast.UnaryOp):
-            return SAFE_OPERATORS[type(node.op)](_eval(node.operand))
-        elif isinstance(node, ast.Name):
-            if node.id == term:
-                return term_value
-            raise ValueError(f"Unknown variable: {node.id}")
-        else:
-            raise ValueError("Unsupported expression")
-    return _eval(ast.parse(expr, mode="eval").body)
 
 
 class BusyInfo:
@@ -105,24 +65,6 @@ class Kernel(Settings):
 
     The Kernel stores a persistence object, thread interactions, contexts, a translation routine, a run_later operation,
     jobs for the scheduler, listeners for signals, channel information, a list of devices, registered commands.
-
-    Key Features:
-    - Plugin-based architecture with lifecycle management
-    - Thread-safe job scheduling and execution
-    - Signal-based inter-module communication
-    - Channel-based messaging system
-    - Settings persistence and configuration management
-    - Translation and internationalization support
-    - Graceful shutdown with thread cleanup
-
-    Thread Management:
-    - Daemon scheduler thread for background job processing
-    - Proper thread synchronization and shutdown handling
-    - Job queue management with configurable delays
-
-    Lifecycle:
-    - init → prerun → run → postrun → preshutdown → shutdown → end
-    - Supports restart capability with state preservation
     """
 
     def __init__(
@@ -175,7 +117,6 @@ class Kernel(Settings):
         # All registered threads.
         self.threads = {}
         self.thread_lock = threading.Lock()
-        self.thread_local = threading.local() 
 
         # All established delegates
         self.delegates = []
@@ -206,7 +147,6 @@ class Kernel(Settings):
         self.scheduler_handles_default_thread_jobs = True
 
         self.state = "init"
-        self._shutdown_requested = False
 
         # Scheduler
         self.jobs = {}
@@ -215,10 +155,6 @@ class Kernel(Settings):
         # Signal Listener
         self.signal_job = None
         self.listeners = {}
-        self.listener_stats = {}
-        # Per-listener timing stats (only tracked when debug_mode is active)
-        # { signal: { listener_id: [calls, messages, total_time] } }
-        self.listener_call_stats = {}
         self._add_lock = threading.Lock()
         self._adding_listeners = []
         self._remove_lock = threading.Lock()
@@ -249,9 +185,6 @@ class Kernel(Settings):
         self.show_aio_prompt = True
         self.silent_mode = False
         self.inhibitor = Inhibitor()
-
-        # Capabilities
-        self._capabilities = {}
 
     def __str__(self):
         return f"Kernel({self.name}, {self.profile}, {self.version})"
@@ -928,11 +861,6 @@ class Kernel(Settings):
                     channel(f"kernel-premain: {str(k)}")
                 if hasattr(k, "premain"):
                     k.premain()
-                    if self._shutdown:
-                        # Quit the program if shutdown was requested during premain
-                        # print (f"Shutdown requested during premain of {str(k)}: start was {KERNEL_LIFECYCLE_NAMES[start]}, end={KERNEL_LIFECYCLE_NAMES[end]}.")
-                        start = LIFECYCLE_KERNEL_PRESHUTDOWN
-                        end = LIFECYCLE_KERNEL_SHUTDOWN
         if start < LIFECYCLE_KERNEL_PREMAIN <= end:
             if channel:
                 channel("(plugin) kernel-premain")
@@ -1258,7 +1186,7 @@ class Kernel(Settings):
 
         @return:
         """
-        self.scheduler_thread = self.threaded(self.run, thread_name="Scheduler", daemon=True)
+        self.scheduler_thread = self.threaded(self.run, thread_name="Scheduler")
         self.signal_job = self.add_job(
             run=self.process_queue,
             name="kernel.signals",
@@ -1321,8 +1249,7 @@ class Kernel(Settings):
                     line = await loop.run_in_executor(None, sys.stdin.readline)
                     line = line.strip()
                     if line in ("quit", "shutdown", "exit", "restart"):
-                        print (f"Will shut down due to '{line}' command.")
-                        self._shutdown = True
+                        self._quit = True
                         if line == "restart":
                             self._restart = True
                         break
@@ -1331,6 +1258,7 @@ class Kernel(Settings):
                         break
 
             import asyncio
+
             loop = asyncio.get_event_loop()
             loop.run_until_complete(aio_readline(loop))
             loop.close()
@@ -1338,26 +1266,6 @@ class Kernel(Settings):
 
     def postmain(self):
         pass
-
-    def shutdown(self):
-        """
-        Initiate kernel shutdown and wait for scheduler thread.
-        
-        This is a lightweight shutdown method that signals termination
-        and waits for the scheduler thread to complete. Used for quick
-        shutdowns like settings reset operations.
-        
-        For comprehensive shutdown with full cleanup, use the main
-        shutdown procedure (see below).
-        
-        Sets kernel state to "terminate" and waits up to 1 second
-        for the scheduler thread to finish.
-        """
-        self.state = "terminate"
-        self._shutdown = True
-        # Wait for the scheduler thread to finish
-        if hasattr(self, 'scheduler_thread') and self.scheduler_thread.is_alive():
-            self.scheduler_thread.join(timeout=1.0)
 
     def preshutdown(self):
         channel = self.channel("shutdown")
@@ -1398,21 +1306,20 @@ class Kernel(Settings):
 
     def shutdown(self):
         """
-        Execute comprehensive kernel shutdown procedure.
+        Starts shutdown procedure.
 
-        This is the main shutdown method that performs full cleanup:
-        - Suspends all signals
-        - Flushes and shuts down all contexts
-        - Stops and closes all opened modules
-        - Terminates all threads
-        - Cleans up residual listeners
+        Suspends all signals.
+        Each initialized context is flushed and shutdown.
+        Each opened module within the context is stopped and closed.
 
-        This method should be called during normal application shutdown
-        to ensure proper resource cleanup and state persistence.
+        All threads are stopped.
+
+        Any residual attached listeners are made warnings.
+
+        @return:
         """
         channel = self.channel("shutdown")
         self.state = "end"  # Terminates the Scheduler.
-        self._shutdown_requested = True
 
         _ = self.translation
 
@@ -1478,7 +1385,7 @@ class Kernel(Settings):
         for thread_name in list(self.threads):
             thread_count += 1
             try:
-                thread = self.threads[thread_name][0]
+                thread = self.threads[thread_name]
             except KeyError:
                 if channel:
                     channel(_("Thread {name} exited safely").format(name=thread_name))
@@ -1556,11 +1463,9 @@ class Kernel(Settings):
                     )
         self._last_message = {}
         self.listeners = {}
-        self.listener_stats = {}
-        self.listener_call_stats = {}
         if (
-            self.scheduler_thread != threading.current_thread() and not self.scheduler_thread.daemon
-        ):  # Join if not this thread and not daemon.
+            self.scheduler_thread != threading.current_thread()
+        ):  # Join if not this thread.
             self.scheduler_thread.join()
         if channel:
             channel(_("Shutdown."))
@@ -1851,8 +1756,6 @@ class Kernel(Settings):
         thread_name: str = None,
         result: Callable = None,
         daemon: bool = False,
-        user_type : bool = False,
-        info : str = "",
     ) -> Thread:
         """
         Register a thread, and run the provided function with the name if needed. When the function finishes this thread
@@ -1875,7 +1778,7 @@ class Kernel(Settings):
         if thread_name is None:
             thread_name = func.__name__
         try:
-            old_thread = self.threads[thread_name][0]
+            old_thread = self.threads[thread_name]
             channel(
                 _("Thread: {name} already exists. Waiting...").format(name=thread_name)
             )
@@ -1919,13 +1822,7 @@ class Kernel(Settings):
                 channel(_("Thread: {name}, Finished").format(name=thread_name))
 
         thread.run = run
-        self.threads[thread_name] = [
-            thread, 
-            "Running",
-            user_type,
-            info,
-            time.time(),
-        ]
+        self.threads[thread_name] = thread
         thread.daemon = daemon
         thread.start()
         self.thread_lock.release()
@@ -1951,32 +1848,6 @@ class Kernel(Settings):
             return _("Idle")
         elif state == "unknown":
             return _("Unknown")
-
-    def get_thread_message(self, thread_name) -> str:
-        if thread_name not in self.threads:
-            return ""
-        message = self.threads[thread_name][1]
-        return message
-
-    def set_thread_message(self, thread_name, message):
-        if thread_name not in self.threads:
-            return
-        thread, _, user_type, info, started = self.threads[thread_name]
-        # Update the thread status
-        self.threads[thread_name] = [thread, message, user_type, info, started]
-
-    def get_thread_messages(self, user_type_only: bool = False) -> list:
-        """
-        Get a list of all thread messages.
-        @param user_type_only: If True, only include user threads.
-        @return: List of thread messages (thread_name, status, user_type, info)
-        """
-        messages = []
-        for thread_name, (_, message, user_type, info) in self.threads.items():
-            if user_type_only and not user_type:
-                continue
-            messages.append([thread_name, message, user_type, info])
-        return messages 
 
     # ==========
     # SCHEDULER
@@ -2037,12 +1908,8 @@ class Kernel(Settings):
         Check each job, and if that job is scheduled to run. Executes that job.
         @return:
         """
-        if self._shutdown_requested:
-            return
         self.state = "active"
         while self.state != "end":
-            if self._shutdown_requested:
-                break
             time.sleep(self.delay)
             while self.state == "pause":
                 # The scheduler is paused.
@@ -2151,11 +2018,6 @@ class Kernel(Settings):
         @param path: Path of signal
         @param message: Message to send.
         """
-        if code not in self.listener_stats:
-            self.listener_stats[code] = [1, 0, 0]  # [calls, messages, duration]
-        else:
-            self.listener_stats[code][0] += 1 # Calls
-        # print(f"Signal queued: {code} {path} {message}: {self.listener_stats[code]}")
         with self._message_queue_lock:
             self._message_queue[code] = path, message
 
@@ -2173,25 +2035,15 @@ class Kernel(Settings):
         if not add:
             return
 
-        already_added = set()
         for signal, funct, lso in add:
             if signal in self.listeners:
                 listeners = self.listeners[signal]
                 listeners.append((funct, lso))
             else:
                 self.listeners[signal] = [(funct, lso)]
-            if signal not in self.listener_stats:
-                self.listener_stats[signal] = [0, 0, 0]  # [calls, messages, duration]
             if signal in self._last_message:
-                if signal not in already_added:
-                    already_added.add(signal)
-                    self.listener_stats[signal][0] += 1 # Calls
-
                 origin, message = self._last_message[signal]
-                self.listener_stats[signal][1] += 1 # Messages
-                t0 = time.time()
                 funct(origin, *message)
-                self.listener_stats[signal][2] += time.time() - t0 # Duration
 
     def _process_remove_listeners(self):
         """
@@ -2242,36 +2094,12 @@ class Kernel(Settings):
         for signal, payload in queue.items():
             origin, message = payload
             if signal in self.listeners:
-                if signal not in self.listener_stats:
-                    self.listener_stats[signal] = [1, 0, 0]  # [calls, messages, duration]
                 listeners = self.listeners[signal]
                 for listener, listen_lso in listeners:
                     try:
-                        t0 = time.time()    
                         listener(origin, *message)
-                        duration = time.time() - t0
-                        self.listener_stats[signal][1] += 1 # Messages
-                        self.listener_stats[signal][2] += duration # Duration
-
-                        # Record per-listener statistics (only when debug_mode is active)
-                        if getattr(self.root, 'debug_mode', False):
-                            try:
-                                lid = f"{listener.__module__}:{getattr(listener, '__name__', repr(listener))}"
-                            except Exception:
-                                lid = repr(listener)
-                            if signal not in self.listener_call_stats:
-                                self.listener_call_stats[signal] = {}
-                            if lid not in self.listener_call_stats[signal]:
-                                # [calls, messages, total_time]
-                                self.listener_call_stats[signal][lid] = [0, 0, 0.0]
-                            self.listener_call_stats[signal][lid][0] += 1
-                            self.listener_call_stats[signal][lid][1] += 1
-                            self.listener_call_stats[signal][lid][2] += duration
-
                     except RuntimeError as e:
-                        print(
-                            f"Listener {listener} no longer available. Error in {signal}: {e}"
-                        )
+                        print(f"Listener {listener} no longer available. Error in {signal}: {e}")
                     if signal_channel and signal not in to_be_ignored:
                         signal_channel(
                             f"Signal: {origin} {signal}: "
@@ -2681,7 +2509,7 @@ class Kernel(Settings):
         @self.console_option("output", "o", help=_("Output type to match"), type=str)
         @self.console_option("input", "i", help=_("Input type to match"), type=str)
         @self.console_argument("extended_help", type=str)
-        @self.console_command(("help", "?"), hidden=True, help="help <help> : " + _("get help on a command"))
+        @self.console_command(("help", "?"), hidden=True, help=_("help <help>"))
         def help_command(channel, _, extended_help, output=None, input=None, **kwargs):
             """
             'help' will display the list of accepted commands. Help <command> will provided extended help for
@@ -2777,7 +2605,7 @@ class Kernel(Settings):
                 else:
                     channel(command_name.split("/")[-1])
 
-        @self.console_command(("find", "??"), hidden=False, help="find <substr> : " + _("display the list of accepted commands that contain a given substring"))
+        @self.console_command(("find", "??"), hidden=False, help=_("find <substr>"))
         def find_command(channel, _, remainder=None, **kwargs):
             """
             'find' will display the list of accepted commands that contain a given substr.
@@ -2860,19 +2688,13 @@ class Kernel(Settings):
             """
             channel(_("----------"))
             channel(_("Registered Threads:"))
-            parts = ["Nr", "thread", "status", "type", "info", "alive"]
-            channel(" ".join(parts))
-            channel("-"*60)
             for i, thread_name in enumerate(list(self.threads)):
-                thread, message, user_type, info, started = self.threads[thread_name]
-                parts = []
+                thread = self.threads[thread_name]
+                parts = list()
                 parts.append(f"{i + 1}:")
-                parts.append(thread_name)
-                parts.append("<user>" if user_type else "<system>")
-                parts.append(message)
-                parts.append(info)
-                runtime = time.time() - started
-                parts.append(f"{runtime:.1f}s" if thread.is_alive else _("dead"))
+                parts.append(str(thread))
+                if thread.is_alive:
+                    parts.append(_("is alive."))
                 channel(" ".join(parts))
             channel(_("----------"))
 
@@ -3136,7 +2958,7 @@ class Kernel(Settings):
                     else:
                         winsound.PlaySound(sys_snd, winsound.SND_FILENAME)
                 except Exception as e:
-                    channel(_("Encountered exception {error}").format(error=e))
+                    channel("Encountered exception {e} during play")
                     pass
 
             def _play_darwin():
@@ -3145,7 +2967,7 @@ class Kernel(Settings):
                 try:
                     subprocess.run(cmd, shell=False)
                 except OSError as e:
-                    channel(_("Encountered exception {error}").format(error=f"{e} (cmd={cmd[0]})"))
+                    channel(f"Could not run {cmd[0]}: {e}")
 
             def _play_linux():
                 try:
@@ -3266,7 +3088,7 @@ class Kernel(Settings):
         @self.console_option(
             "path", "p", type=str, default="/", help=_("Path of variables to set.")
         )
-        @self.console_command("module", help="module [(open|close) <module_name>] : " + _("open/closes modules"))
+        @self.console_command("module", help=_("module [(open|close) <module_name>]"))
         def module(channel, _, path=None, args=tuple(), **kwargs):
             if len(args) == 0:
                 channel(_("----------"))
@@ -3558,7 +3380,7 @@ class Kernel(Settings):
 
         @self.console_command(
             "channel",
-            help="channel (open|close|save|list|print) <channel_name> : " + _("manage channels"),
+            help=_("channel (open|close|save|list|print) <channel_name>"),
             output_type="channel",
         )
         def channel(channel, _, remainder=None, **kwargs):
@@ -3742,7 +3564,7 @@ class Kernel(Settings):
         @self.console_option(
             "path", "p", type=str, default="/", help=_("Path of variables to set.")
         )
-        @self.console_command("set", help="set [<key> <value>] : " + _("set or list variables"))
+        @self.console_command("set", help=_("set [<key> <value>]"))
         def set_command(channel, _, path=None, args=tuple(), **kwargs):
             relevant_context = self.get_context(path) if path is not None else self.root
             if len(args) == 0:
@@ -3838,52 +3660,10 @@ class Kernel(Settings):
         def send_signal(channel, _, signalname=None, signalargs=None, **kwargs):
             if signalname is None:
                 channel(_("Please provide a signal to send, attached listeners:"))
-                stats = list(self.listener_stats.keys())
-                # All signals, but show the ones used the longest, the most first
-                information = [
-                    (key, self.listener_stats.get(key, (0, 0, 0.0)))
-                    for key in stats
-                ]
-                # Sort by total_time desc, messages desc, then name ascending (tie-breaker)
-                information.sort(key=lambda item: (-item[1][2], -item[1][1], item[0]))
-                channel(_("Signal Statistics:"))
-                # Prepare a neat table: index, signal (truncated), requests, messages, total time, avg time
-                header = f"{'#':>3}  {'Signal':<35} {'Listen':<6} {'Requests':>8} {'Messages':>8} {'Total(s)':>12} {'Avg(s)':>12}"
-                channel(header)
-                channel('-' * len(header))
-                for idx, (key, (calls, messages, total_time)) in enumerate(information):
-                    avg = 0.0 if messages == 0 else total_time / messages
-                    # Make the signal name safe and truncate if it's too long
-                    key_safe = key.replace('\n', '\\n')
-                    if len(key_safe) > 35:
-                        key_safe = key_safe[:32] + '...'
-                    attached = 0 if key not in self.listeners else len(self.listeners[key])
-                    channel(f"{idx:3d}  {key_safe:<35} {attached:<6} {calls:8d} {messages:8d} {total_time:12.3f} {avg:12.6f}")
-
-                    # Per-listener breakdown (if available)
-                    lcs = getattr(self, 'listener_call_stats', {}) or {}
-                    if key in lcs and lcs[key]:
-                        # Build list of (lid, calls, total_time, avg) for listeners with messages
-                        listener_items = []
-                        for lid, data in lcs[key].items():
-                            lcalls = int(data[0])
-                            ltotal = float(data[2])
-                            if lcalls == 0:
-                                continue
-                            lavg = ltotal / lcalls if lcalls else 0.0
-                            listener_items.append((lid, lcalls, ltotal, lavg))
-                        if listener_items:
-                            # Sort by total_time descending
-                            listener_items.sort(key=lambda x: x[2], reverse=True)
-                            subheader = f"     {'Listener':<45} {'Calls':>6} {'Total(s)':>12} {'Avg(s)':>12}"
-                            channel(subheader)
-                            channel('     ' + '-' * (len(subheader) - 5))
-                            for lid, lcalls, ltotal, lavg in listener_items:
-                                lid_safe = lid.replace('\n', '\\n')
-                                if len(lid_safe) > 45:
-                                    lid_safe = lid_safe[:42] + '...'
-                                channel(f"     {lid_safe:<45} {lcalls:6d} {ltotal:12.3f} {lavg:12.6f}")
-                
+                signal_keys = list(self.listeners.keys())
+                signal_keys.sort()
+                for idx, key in enumerate(signal_keys):
+                    channel(f"{idx}: {key}")
                 return
             try:
                 if signalargs is None:
@@ -3894,177 +3674,6 @@ class Kernel(Settings):
             except (TypeError, RuntimeError) as e:
                 channel(f"Error while sending {signalname}, {signalargs}: {e}")
             return
-
-        @self.console_argument("avg_threshold", type=float, help=_("Average time threshold in seconds"))
-        @self.console_argument("total_threshold", type=float, help=_("Total time threshold in seconds"))
-        @self.console_command("signal-stats", help=_("List listeners exceeding thresholds (requires debug_mode)"))
-        def signal_stats(channel, _, remainder=None, avg_threshold = None, total_threshold = None, **kwargs):
-            """Show routines called by the signal processor that are slow.
-
-            Usage: signal-stats [avg_threshold] [total_threshold]
-            If thresholds are not provided, defaults are avg >= 1.0s, total >= 10.0s
-            
-            Note: Stats are only collected when debug_mode is active (set debug_mode True)
-            """
-            # Check if debug mode is active
-            if not getattr(self.root, 'debug_mode', False):
-                channel(_("Signal stats are only collected when debug_mode is active."))
-                channel(_("To enable: set debug_mode True (requires restart)"))
-                return
-            
-            # Default thresholds
-            avg_thresh = 1.0 if avg_threshold is None else avg_threshold
-            total_thresh = 10.0 if total_threshold is None else total_threshold
-
-            stats = []
-            lcs = getattr(self, 'listener_call_stats', {}) or {}
-            for signal, ldict in lcs.items():
-                for lid, data in ldict.items():
-                    calls = int(data[0])
-                    total_time = float(data[2])
-                    avg = total_time / calls if calls else 0.0
-                    if avg >= avg_thresh or total_time >= total_thresh:
-                        stats.append((signal, lid, calls, total_time, avg))
-
-            if not stats:
-                channel(_("No slow listeners found (avg >= {avg} or total >= {total}).").format(avg=avg_thresh, total=total_thresh))
-                return
-
-            # Sort by total_time descending
-            stats.sort(key=lambda x: x[3], reverse=True)
-            header = f"{'#':>3} {'Signal':<35} {'Listener':<45} {'Calls':>6} {'Total(s)':>12} {'Avg(s)':>12}"
-            channel(header)
-            channel('-' * len(header))
-            for idx, (signal, lid, calls, total_time, avg) in enumerate(stats):
-                sig_safe = signal.replace('\n', '\\n')
-                if len(sig_safe) > 35:
-                    sig_safe = sig_safe[:32] + '...'
-                lid_safe = lid.replace('\n', '\\n')
-                if len(lid_safe) > 45:
-                    lid_safe = lid_safe[:42] + '...'
-                channel(f"{idx:3d} {sig_safe:<35} {lid_safe:<45} {calls:6d} {total_time:12.3f} {avg:12.6f}")
-
-        # Flat tracker console command
-        @self.console_argument("action", type=str, default=None, help=_("Action: 'reset' to reset the counter"))
-        @self.console_command("flat-stats", help=_("Show or reset the global flat() call counter"))
-        def flat_stats(channel, _, remainder=None, action=None, **kwargs):
-            try:
-                total = self.elements.flat_tracker.get()
-            except Exception:
-                total = None
-            if action == 'reset':
-                try:
-                    self.elements.flat_tracker.reset()
-                except Exception:
-                    pass
-                channel(f"Flat calls: {total} (reset)")
-            else:
-                channel(f"Flat calls: {total}")
-
-        # ==========
-        # Threaded execution
-        # ==========
-        @self.console_command(
-            "threaded",
-            help=_(
-                "Execute the following command as a separate task in the background"
-            ),
-        )
-        def threaded_command(channel, _, remainder=None, **kwargs):
-            def handler():
-                """
-                Runs the specified command in a background thread and reports completion time.
-                This function is intended to be used as a job handler for asynchronous command execution.
-                """
-                self.thread_local.thread_name = job_identifier
-                self.signal("thread_update", "/", job_identifier, "started")
-                t0 = time.perf_counter()
-                try:
-                    self._console_parse(remainder, channel=self._console_channel)
-                finally:
-                    # Report completion even on failure, but do NOT swallow
-                    # the exception. Letting it propagate routes it through
-                    # kernel.threaded()'s run() wrapper to sys.excepthook,
-                    # producing the full crash log (file + dialog + terminal).
-                    t1 = time.perf_counter()
-                    self._console_channel(
-                        _("Finished command {cmd} after {duration}sec").format(
-                            cmd=remainder, duration=f"{t1 - t0:.2f}"
-                        )
-                    )
-                    self.signal("thread_update", "/", job_identifier, "ended")
-
-            if remainder is None:
-                # List all scheduled jobs that fit our format
-                i = 0
-                for job_name, job in self.jobs.items():
-                    if job_name is None or not job_name.startswith("threaded-"):
-                        continue
-                    i += 1
-                    parts = list()
-                    parts.append(f"{i}:")
-                    parts.append(job.info)
-                    parts.append(f"{time.time() - job._created}sec")
-                    parts.append(job.message)
-                    channel(" ".join(parts))
-                channel(_("----------"))
-                return
-            job_identifier = f"user-{time.time():.4f}"
-            thread = self.threaded(handler, thread_name=job_identifier, user_type=True, info=remainder)
-            # self.schedule(job)
-            channel(
-                _("Command '{cmd}' is now running in the background.").format(
-                    cmd=remainder
-                )
-            )
-
-        @self.console_option(
-            "variable", "v", type=str, default="loop", help=_("Variable name to replace (default 'loop')")
-        )
-        @self.console_argument("range_from", type=int, help=_("First value to take"))
-        @self.console_argument("range_to", type=int, help=_("Last value to take"))
-        @self.console_command("loop", help=_("loop a given command"))
-        def loop_command(
-            channel, _, range_from=None, range_to=None, remainder=None, variable=None, **kwargs
-        ):
-            if variable is None:
-                variable = "loop"
-            if range_from is None or range_to is None:
-                channel(_("Please provide the range to loop in"))
-                return
-            try:
-                range_from = int(range_from)
-                range_to = int(range_to)
-                if range_to < range_from:
-                    raise ValueError(
-                        _("upper bound needs to be greater than lower bound")
-                    )
-            except ValueError as e:
-                channel(
-                    _("Invalid values for from={lbound}, to={ubound}: {error}").format(
-                        lbound=range_from, ubound=range_to, error=e
-                    )
-                )
-                return
-            if remainder is None:
-                channel(_("Please provide a command to loop."))
-                return
-
-            for loop_index in range(range_from, range_to + 1):
-
-                def repl(match):
-                    expr = match.group(1)
-                    try:
-                        return str(safe_eval(expr, variable, loop_index))
-                    except Exception:
-                        return match.group(0)
-
-                cmd = re.sub(r"\{([^}]+)\}", repl, remainder)
-                channel(f"#{loop_index}: {cmd}")
-                try:
-                    data_out = self._console_parse(cmd, channel=self._console_channel)
-                except Exception as e:
-                    channel(_("Encountered exception {error}").format(error=e))
 
         # ==========
         # LIFECYCLE
@@ -4277,34 +3886,6 @@ class Kernel(Settings):
         """
         return console_command_remove(self, *args, **kwargs)
 
-    def add_capability(self, key, value):
-        """
-        Add a capability to the kernel.
-
-        @param key: capability name
-        @param value: capability value
-        @return:
-        """
-        self._capabilities[key] = value
-
-    def get_capability(self, key):
-        """
-        Retrieve a capability from the kernel.
-
-        @param key: capability name
-        @return:
-        """
-        return self._capabilities.get(key, None)
-    
-    def get_capabilities(self):
-        """
-        Retrieve all capabilities from the kernel.
-
-        @return: dictionary of capabilities
-        """
-        return self._capabilities.copy()    
-
-# ==========
 
 def lookup_listener(param):
     """
@@ -4341,4 +3922,3 @@ def signal_listener(param):
         return func
 
     return decor
-

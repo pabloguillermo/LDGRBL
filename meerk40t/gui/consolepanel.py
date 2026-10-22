@@ -6,8 +6,8 @@ from wx import aui
 
 from meerk40t.gui.icons import STD_ICON_SIZE, icons8_console
 from meerk40t.gui.mwindow import MWindow
-from meerk40t.gui.wxutils import TextCtrl, dispatch_to_main_thread
 from meerk40t.kernel import signal_listener
+from meerk40t.gui.wxutils import TextCtrl
 
 try:
     from wx import richtext
@@ -125,11 +125,11 @@ def register_panel_console(window, context):
                     pass
             if cur_font is None:
                 cur_font = wx.Font(
-                    10,
-                    wx.FONTFAMILY_TELETYPE,
-                    wx.FONTSTYLE_NORMAL,
-                    wx.FONTWEIGHT_NORMAL,
-                )
+                10,
+                wx.FONTFAMILY_TELETYPE,
+                wx.FONTSTYLE_NORMAL,
+                wx.FONTWEIGHT_NORMAL,
+            )
             data.SetInitialFont(cur_font)
 
             dlg = wx.FontDialog(window, data)
@@ -161,12 +161,6 @@ def register_panel_console(window, context):
 
 
 class ConsolePanel(wx.ScrolledWindow):
-    """ConsolePanel - User interface panel for laser cutting operations
-    **Technical Purpose:**
-    Provides user interface controls for console functionality. Integrates with console_update, wxpane/Console for enhanced functionality.
-    **End-User Perspective:**
-    This panel provides user interface controls for console functionality in MeerK40t."""
-
     def __init__(self, *args, context=None, **kwargs):
         # begin wxGlade: ConsolePanel.__init__
         kwargs["style"] = kwargs.get("style", 0) | wx.TAB_TRAVERSAL
@@ -360,7 +354,6 @@ class ConsolePanel(wx.ScrolledWindow):
             self.context.signal("console_update")
 
     @signal_listener("console_update")
-    @dispatch_to_main_thread
     def update_console_main(self, origin, *args):
         with self._buffer_lock:
             buffer = self._buffer

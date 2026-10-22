@@ -17,12 +17,12 @@ from meerk40t.core.cutcode.plotcut import PlotCut
 from meerk40t.core.cutcode.quadcut import QuadCut
 from meerk40t.core.cutcode.waitcut import WaitCut
 
-from ..core.geomstr import Geomstr
 from ..core.parameters import Parameters
 from ..core.plotplanner import PlotPlanner
 from ..core.units import UNITS_PER_INCH, UNITS_PER_MIL, UNITS_PER_MM, Length
 from ..device.basedevice import PLOT_FINISH, PLOT_JOG, PLOT_RAPID, PLOT_SETTING
 from ..kernel import signal_listener
+from ..tools.geomstr import Geomstr
 
 
 class GRBLDriver(Parameters):
@@ -157,24 +157,6 @@ class GRBLDriver(Parameters):
             self.speed_dirty = True
         self.settings[key] = value
 
-    def _job_aborted(self):
-        """True while estop/clear_queue is stopping the active job."""
-        try:
-            spooler = self.service.spooler
-        except AttributeError:
-            return False
-        return getattr(spooler, "_user_aborted", False) or getattr(
-            spooler, "_abort_clear", False
-        )
-
-    def _abort_plot_if_needed(self):
-        """Exit plot_start quickly when the user aborted the spooler job."""
-        if self._job_aborted():
-            self.queue.clear()
-            self._set_queue_status(0, 0)
-            return True
-        return False
-
     def status(self):
         """
         Wants a status report of what the driver is doing.
@@ -204,7 +186,7 @@ class GRBLDriver(Parameters):
                 (old_current[0], old_current[1], new_current[0], new_current[1]),
             )
 
-    def move_rel(self, dx, dy, confined=False):
+    def move_rel(self, dx, dy):
         """
         Requests laser move relative position dx, dy in physical units
 
@@ -220,29 +202,7 @@ class GRBLDriver(Parameters):
         # y += dy
         # x, y = self.service.view.position(x, y)
         # self._move(x, y)
-        if confined:
-            if not isinstance(dx, (int, float)):
-                dx = float(Length(dx))
-            if not isinstance(dy, (int, float)):
-                dy = float(Length(dy))
-            bed_w = float(Length(self.service.view.width))
-            bed_h = float(Length(self.service.view.height))
-            # Clamp in bed/UI coordinates (same as Navigation get_movement).
-            # Do not mix native machine coords with UI jog deltas — breaks Y when
-            # GRBL MPos Y is negative (0 at top, -bedheight into the bed).
-            cur_x, cur_y = self.service.current
-            cur_x = float(cur_x)
-            cur_y = float(cur_y)
-            new_x = cur_x + dx
-            new_y = cur_y + dy
-            if new_x < 0:
-                dx = -cur_x
-            elif new_x > bed_w:
-                dx = bed_w - cur_x
-            if new_y < 0:
-                dy = -cur_y
-            elif new_y > bed_h:
-                dy = bed_h - cur_y
+
         self._g91_relative()
         self._clean()
         old_current = self.service.current
@@ -275,13 +235,6 @@ class GRBLDriver(Parameters):
         )  # This can't be sent early since these are timed operations.
         self.wait(time_in_ms)
         self.laser_off()
-    
-    @staticmethod
-    def unit_str(value):
-        # Use minimal amount of decimals to represent the value
-        s = f"{value:.6f}"
-        s = s.rstrip("0").rstrip(".")
-        return s
 
     def laser_off(self, power=0, *values):
         """
@@ -292,7 +245,7 @@ class GRBLDriver(Parameters):
         @return:
         """
         if power is not None:
-            spower = f" S{self.unit_str(power)}"
+            spower = f" S{power:.1f}"
             self.power = power
             self.power_dirty = False
             self(f"G1 {spower}{self.line_end}")
@@ -310,12 +263,12 @@ class GRBLDriver(Parameters):
         spower = ""
         sspeed = ""
         if power is not None:
-            spower = f" S{self.unit_str(power)}"
+            spower = f" S{power:.1f}"
             # We already established power, so no need for power_dirty
             self.power = power
             self.power_dirty = False
         if speed is not None:
-            sspeed = f"G1 F{self.unit_str(speed)}{self.line_end}"
+            sspeed = f"G1 F{speed}{self.line_end}"
             self.speed = speed
             self.speed_dirty = False
         self(f"M3{spower}{self.line_end}{sspeed}")
@@ -340,7 +293,7 @@ class GRBLDriver(Parameters):
         g = Geomstr()
         for segment_type, start, c1, c2, end, sets in geom.as_lines():
             while self.hold_work(0):
-                if self.service.kernel.is_shutdown or self._job_aborted():
+                if self.service.kernel.is_shutdown:
                     return
                 time.sleep(0.05)
             x = self.native_x
@@ -383,9 +336,7 @@ class GRBLDriver(Parameters):
                 g.clear()
                 g.quad(complex(start), complex(c1), complex(end))
                 for p in list(g.as_equal_interpolated_points(distance=interp))[1:]:
-                    while self.paused or self._job_aborted():
-                        if self._job_aborted():
-                            return
+                    while self.paused:
                         time.sleep(0.05)
                     self._move(p.real, p.imag)
             elif segment_type == "cubic":
@@ -399,9 +350,7 @@ class GRBLDriver(Parameters):
                     complex(end),
                 )
                 for p in list(g.as_equal_interpolated_points(distance=interp))[1:]:
-                    while self.paused or self._job_aborted():
-                        if self._job_aborted():
-                            return
+                    while self.paused:
                         time.sleep(0.05)
                     self._move(p.real, p.imag)
             elif segment_type == "arc":
@@ -415,9 +364,7 @@ class GRBLDriver(Parameters):
                     complex(end),
                 )
                 for p in list(g.as_equal_interpolated_points(distance=interp))[1:]:
-                    while self.paused or self._job_aborted():
-                        if self._job_aborted():
-                            return
+                    while self.paused:
                         time.sleep(0.05)
                     self._move(p.real, p.imag)
             elif segment_type == "point":
@@ -461,11 +408,6 @@ class GRBLDriver(Parameters):
         self._g90_absolute()
         self._g94_feedrate()
         self._clean()
-        self._rotary_firmware_active = False
-        rotary = getattr(self.service, "rotary", None)
-        if rotary is not None and rotary.active:
-            if rotary.apply_firmware_steps(self):
-                self._rotary_firmware_active = True
         if self.service.use_m3:
             self(f"M3{self.line_end}")
         else:
@@ -474,10 +416,6 @@ class GRBLDriver(Parameters):
         total = len(self.queue)
         current = 0
         for q in self.queue:
-            if self._job_aborted():
-                self._rotary_restore_firmware_steps()
-                self.queue.clear()
-                return
             # Are there any custom commands to be executed?
             # Usecase (as described in issue https://github.com/meerk40t/meerk40t/issues/2764 ):
             # Switch between M3 and M4 mode for cut / raster
@@ -493,7 +431,7 @@ class GRBLDriver(Parameters):
             current += 1
             self._set_queue_status(current, total)
             while self.hold_work(0):
-                if self.service.kernel.is_shutdown or self._job_aborted():
+                if self.service.kernel.is_shutdown:
                     return
                 time.sleep(0.05)
             x = self.native_x
@@ -539,9 +477,7 @@ class GRBLDriver(Parameters):
                 g = Geomstr()
                 g.quad(complex(*q.start), complex(*q.c()), complex(*q.end))
                 for p in list(g.as_equal_interpolated_points(distance=interp))[1:]:
-                    while self.paused or self._job_aborted():
-                        if self._job_aborted():
-                            return
+                    while self.paused:
                         time.sleep(0.05)
                     self._move(p.real, p.imag)
             elif isinstance(q, CubicCut):
@@ -555,9 +491,7 @@ class GRBLDriver(Parameters):
                     complex(*q.end),
                 )
                 for p in list(g.as_equal_interpolated_points(distance=interp))[1:]:
-                    while self.paused or self._job_aborted():
-                        if self._job_aborted():
-                            return
+                    while self.paused:
                         time.sleep(0.05)
                     self._move(p.real, p.imag)
             elif isinstance(q, WaitCut):
@@ -576,31 +510,19 @@ class GRBLDriver(Parameters):
                 self.move_mode = 1
                 self.set("power", 1000)
                 for ox, oy, on, x, y in q.plot:
-                    if self._abort_plot_if_needed():
-                        return
                     while self.hold_work(0):
-                        if self._abort_plot_if_needed():
-                            return
                         time.sleep(0.05)
                     # q.plot can have different on values, these are parsed
                     if self.on_value != on:
                         self.power_dirty = True
                     self.on_value = on
-                    if on == 0:
-                        self.move_mode = 0
-                    else:
-                        self.move_mode = 1
                     self._move(x, y)
             else:
                 #  Rastercut
                 self.plot_planner.push(q)
                 self.move_mode = 1
                 for x, y, on in self.plot_planner.gen():
-                    if self._abort_plot_if_needed():
-                        return
                     while self.hold_work(0):
-                        if self._abort_plot_if_needed():
-                            return
                         time.sleep(0.05)
                     if on > 1:
                         # Special Command.
@@ -633,19 +555,9 @@ class GRBLDriver(Parameters):
                     if self.on_value != on:
                         self.power_dirty = True
                     self.on_value = on
-                    if on == 0:
-                        self.move_mode = 0
-                    else:
-                        self.move_mode = 1
                     self._move(x, y)
-        if self._job_aborted():
-            self._rotary_restore_firmware_steps()
-            self.queue.clear()
-            self._set_queue_status(0, 0)
-            return
         self.queue.clear()
         self._set_queue_status(0, 0)
-        self._rotary_restore_firmware_steps()
 
         self(f"G1 S0{self.line_end}")
         self(f"M5{self.line_end}")
@@ -675,46 +587,11 @@ class GRBLDriver(Parameters):
 
         @return:
         """
-        rotary = getattr(self.service, "rotary", None)
-        if rotary is not None and rotary.active:
-            channel = self.service.channel("grbl")
-            _ = self.service._
-            old_current = self.service.current
-            self.native_x = 0
-            self.native_y = 0
-            if self.service.has_endstops and rotary.home_x_only:
-                channel(
-                    _(
-                        "Rotary mode: homing X axis only ($HX). Y is the chuck — do not $HY."
-                    )
-                )
-                self(f"$HX{self.line_end}")
-            else:
-                channel(
-                    _(
-                        "Rotary mode: physical homing blocked. Console: $HX for X only, "
-                        "or disable rotary mode for flat-bed."
-                    )
-                )
-                return
-            new_current = self.service.current
-            if self._signal_updates:
-                self.service.signal(
-                    "driver;position",
-                    (old_current[0], old_current[1], new_current[0], new_current[1]),
-                )
-            return
         old_current = self.service.current
         self.native_x = 0
         self.native_y = 0
         if self.service.has_endstops:
-            # DLC32 / top-left (X−, Y+): $H homes both axes and often alarms
-            # ~50 mm before switches; $HY then $HX matches touch-panel homing.
-            if self.service.sequential_homing:
-                self(f"$HY{self.line_end}")
-                self(f"$HX{self.line_end}")
-            else:
-                self(f"$H{self.line_end}")
+            self(f"$H{self.line_end}")
         else:
             self(f"G28{self.line_end}")
         new_current = self.service.current
@@ -784,7 +661,7 @@ class GRBLDriver(Parameters):
         @param time_in_ms:
         @return:
         """
-        self(f"G04 S{self.unit_str(time_in_ms / 1000.0)}{self.line_end}")
+        self(f"G04 S{time_in_ms / 1000.0}{self.line_end}")
 
     def wait_finish(self, *values):
         """
@@ -795,8 +672,6 @@ class GRBLDriver(Parameters):
         @return:
         """
         while True:
-            if self._job_aborted():
-                return
             if self.queue or len(self.service.controller):
                 time.sleep(0.05)
                 continue
@@ -905,10 +780,10 @@ class GRBLDriver(Parameters):
         @param args:
         @return:
         """
-        self(f"\x18{self.line_end}", real=True)
         self.service.spooler.clear_queue()
         self.queue.clear()
         self.plot_planner.clear()
+        self(f"\x18{self.line_end}", real=True)
         self._g94_feedrate()
         self._g21_units_mm()
         self._g90_absolute()
@@ -962,45 +837,8 @@ class GRBLDriver(Parameters):
     # PROTECTED DRIVER CODE
     ####################
 
-    def _rotary_y_grbl_factor(self):
-        rotary = getattr(self.service, "rotary", None)
-        if rotary is None:
-            return 1.0
-        return rotary.y_grbl_factor()
-
-    def _rotary_restore_firmware_steps(self):
-        if not getattr(self, "_rotary_firmware_active", False):
-            return
-        rotary = getattr(self.service, "rotary", None)
-        if rotary is not None:
-            rotary.restore_firmware_steps(self)
-        self._rotary_firmware_active = False
-
-    def _rotary_transform_move(self, x, y):
-        """Mirror output at G-code time (does not distort scene preview)."""
-        rotary = getattr(self.service, "rotary", None)
-        if rotary is None or not rotary.active:
-            return x, y
-        if self._absolute:
-            try:
-                bw = float(Length(self.service.view.width))
-                bh = float(Length(self.service.view.height))
-            except (ValueError, TypeError):
-                return x, y
-            if rotary.flip_x:
-                x = bw - x
-            if rotary.flip_y:
-                y = bh - y
-        else:
-            if rotary.flip_x:
-                x = -x
-            if rotary.flip_y:
-                y = -y
-        return x, y
-
     def _move(self, x, y, absolute=False):
         old_current = self.service.current
-        x, y = self._rotary_transform_move(x, y)
         if self._absolute:
             self.native_x = x
             self.native_y = y
@@ -1009,16 +847,11 @@ class GRBLDriver(Parameters):
             self.native_y += y
         line = []
         if self.move_mode == 0:
-            if self.power_dirty and self.service.use_g1_for_power:
-                if self.power is not None:
-                    # Turn off laser before rapid move if power is changing
-                    line.append(f"G1 S{self.unit_str(self.power * self.on_value)}")
-                self.power_dirty = False
             line.append("G0")
         else:
             line.append("G1")
         x /= self.unit_scale
-        y = (y * self._rotary_y_grbl_factor()) / self.unit_scale
+        y /= self.unit_scale
         line.append(f"X{x:.3f}")
         line.append(f"Y{y:.3f}")
         if self.zaxis_dirty:
@@ -1033,10 +866,10 @@ class GRBLDriver(Parameters):
 
         if self.power_dirty:
             if self.power is not None:
-                line.append(f"S{self.unit_str(self.power * self.on_value)}")
+                line.append(f"S{self.power * self.on_value:.1f}")
             self.power_dirty = False
         if self.speed_dirty:
-            line.append(f"F{self.unit_str(self.feed_convert(self.speed))}")
+            line.append(f"F{self.feed_convert(self.speed):.1f}")
             self.speed_dirty = False
         self(" ".join(line) + self.line_end)
         new_current = self.service.current
@@ -1124,44 +957,44 @@ class GRBLDriver(Parameters):
         self.unit_scale = UNITS_PER_MM / self.stepper_step_size  # g21 is mm mode.
         self.units_dirty = True
 
-    def _apply_grbl_override_scale(
-        self, factor, reset_cmd, increase_cmd, decrease_cmd, step=0.05
-    ):
-        """Apply GRBL realtime override from 100% in ``step`` increments (default 5%)."""
-        if factor <= 0 or factor > 2.0:
-            factor = 1.0
-        self(reset_cmd, real=True)
-        current = 1.0
-        if factor > 1.0:
-            while current + step <= factor + 1e-6:
-                self(increase_cmd, real=True)
-                current += step
-        elif factor < 1.0:
-            while current - step >= factor - 1e-6:
-                self(decrease_cmd, real=True)
-                current -= step
-
     def set_power_scale(self, factor):
-        # Grbl spindle override: 10%..200% (0x99 reset, 0x9A +10%, 0x9B -10%)
+        # Grbl can only deal with factors between 10% and 200%
         if factor <= 0 or factor > 2.0:
             factor = 1.0
         if self.power_scale == factor:
             return
         self.power_scale = factor
-        self._apply_grbl_override_scale(
-            factor, "\x99\r", "\x9A\r", "\x9B\r", step=0.05
-        )
+
+        # Grbl can only deal with factors between 10% and 200%
+        self("\x99\r", real=True)
+        # Upward loop
+        start = 1.0
+        while start < 2.0 and start < factor:
+            self("\x9B\r", real=True)
+            start += 0.1
+        # Downward loop
+        start = 1.0
+        while start > 0.0 and start > factor:
+            self("\x9A\r", real=True)
+            start -= 0.1
 
     def set_speed_scale(self, factor):
-        # Grbl feed override: 10%..200% (0x90 reset, 0x91 +10%, 0x92 -10%)
+        # Grbl can only deal with factors between 10% and 200%
         if factor <= 0 or factor > 2.0:
             factor = 1.0
         if self.speed_scale == factor:
             return
         self.speed_scale = factor
-        self._apply_grbl_override_scale(
-            factor, "\x90\r", "\x91\r", "\x92\r", step=0.05
-        )
+        self("\x90\r", real=True)
+        start = 1.0
+        while start < 2.0 and start < factor:
+            self("\x91\r", real=True)
+            start += 0.1
+        # Downward loop
+        start = 1.0
+        while start > 0.0 and start > factor:
+            self("\x92\r", real=True)
+            start -= 0.1
 
     @staticmethod
     def has_adjustable_power():

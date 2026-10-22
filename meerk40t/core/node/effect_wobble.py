@@ -6,7 +6,7 @@ from meerk40t.core.node.mixins import Suppressable
 from meerk40t.core.node.node import Node
 from meerk40t.core.units import Length
 from meerk40t.svgelements import Color
-from meerk40t.core.geomstr import Geomstr  # ,  Scanbeam
+from meerk40t.tools.geomstr import Geomstr  # ,  Scanbeam
 
 
 class WobbleEffectNode(Node, Suppressable):
@@ -61,18 +61,10 @@ class WobbleEffectNode(Node, Suppressable):
         return f"{self.__class__.__name__}('{self.type}', {str(self._parent)})"
 
     def __copy__(self):
-        obj = WobbleEffectNode.__new__(WobbleEffectNode)
-        obj.__dict__.update(self.__dict__)
-        obj._children = list()
-        obj._references = list()
-        obj._points = list()
-        obj._default_map = dict()
-        obj._parent = None
-        obj._root = None
-        # Deep-copy mutable style objects
-        obj.stroke = copy(self.stroke)
-        obj.fill = copy(self.fill)
-        return obj
+        nd = self.node_dict
+        nd["stroke"] = copy(self.stroke)
+        nd["fill"] = copy(self.fill)
+        return WobbleEffectNode(**nd)
 
     def get_effect_descriptor(self):
         """
@@ -169,13 +161,6 @@ class WobbleEffectNode(Node, Suppressable):
         if self.autohide and hasattr(new_child, "hidden"):
             new_child.hidden = True
         return super().append_child(new_child)
-
-    def append_children(self, new_children, fast=False):
-        if self.autohide:
-            for new_child in new_children:
-                if hasattr(new_child, "hidden"):
-                    new_child.hidden = True
-        return super().append_children(new_children, fast=fast)
 
     @property
     def radius(self):
@@ -283,8 +268,9 @@ class WobbleEffectNode(Node, Suppressable):
                     res.extend(subs)
                 elif e.type.startswith("elem"):
                     # Is this node hidden? If we autohide, then that's still relevant, if not ignore.
-                    if hasattr(e, "hidden") and e.hidden and not self.autohide:
-                        continue
+                    if hasattr(e, "hidden") and e.hidden:
+                        if not self.autohide:
+                            continue
                     res.append(e)
             return res
 

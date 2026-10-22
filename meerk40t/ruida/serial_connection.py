@@ -7,8 +7,6 @@ Registers the serial connection using pyserial to talk with the serial devices.
 import serial
 from serial import SerialException
 
-from meerk40t.core.serial_utils import serial_open
-
 
 class SerialConnection:
     def __init__(self, service):
@@ -25,9 +23,6 @@ class SerialConnection:
 
     def shutdown(self, *args, **kwargs):
         self.is_shutdown = True
-
-    def set_swizzles(self, *args, **kwargs):
-        pass
 
     def open(self):
         if self.connected:
@@ -48,7 +43,11 @@ class SerialConnection:
                 return
 
             baud_rate = self.service.baud_rate
-            self.laser = serial_open(serial_port, baud_rate, timeout=0)
+            self.laser = serial.Serial(
+                serial_port,
+                baud_rate,
+                timeout=0,
+            )
             self.events("Connected")
 
             self.service.threaded(

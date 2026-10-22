@@ -154,7 +154,7 @@ from meerk40t.core.node.op_raster import RasterOpNode
 from meerk40t.core.units import Angle, Length
 from meerk40t.kernel import CommandSyntaxError
 from meerk40t.svgelements import Color, Matrix
-from meerk40t.core.geomstr import NON_GEOMETRY_TYPES
+from meerk40t.tools.geomstr import NON_GEOMETRY_TYPES
 
 
 def plugin(kernel, lifecycle=None):
@@ -205,36 +205,34 @@ def init_commands(kernel):
         self(".operation* list\n")
 
     @self.console_command(
-        "operation.*",
-        help="operation.* : " + _("selected operations"),
-        output_type="ops",
+        "operation.*", help=_("operation.*: selected operations"), output_type="ops"
     )
     def operation_select(**kwargs):
         return "ops", list(self.ops(emphasized=True))
 
     @self.console_command(
-        "operation*", help="operation* : " + _("all operations"), output_type="ops"
+        "operation*", help=_("operation*: all operations"), output_type="ops"
     )
     def operation_all(**kwargs):
         return "ops", list(self.ops())
 
     @self.console_command(
         "operation~",
-        help="operation~ : " + _("non selected operations."),
+        help=_("operation~: non selected operations."),
         output_type="ops",
     )
     def operation_invert(**kwargs):
         return "ops", list(self.ops(emphasized=False))
 
     @self.console_command(
-        "operation", help="operation : " + _("selected operations."), output_type="ops"
+        "operation", help=_("operation: selected operations."), output_type="ops"
     )
     def operation_base(**kwargs):
         return "ops", list(self.ops(emphasized=True))
 
     @self.console_command(
         r"operation([0-9]+,?)+",
-        help="operation0,2 : " + _("operation #0 and #2"),
+        help=_("operation0,2: operation #0 and #2"),
         regex=True,
         output_type="ops",
     )
@@ -255,7 +253,7 @@ def init_commands(kernel):
 
     @self.console_command(
         "select",
-        help="select : " + _("Set these values as the selection."),
+        help=_("Set these values as the selection."),
         input_type="ops",
         output_type="ops",
     )
@@ -265,7 +263,7 @@ def init_commands(kernel):
 
     @self.console_command(
         "select+",
-        help="select+ : " + _("Add the input to the selection"),
+        help=_("Add the input to the selection"),
         input_type="ops",
         output_type="ops",
     )
@@ -277,7 +275,7 @@ def init_commands(kernel):
 
     @self.console_command(
         "select-",
-        help="select- : " + _("Remove the input data from the selection"),
+        help=_("Remove the input data from the selection"),
         input_type="ops",
         output_type="ops",
     )
@@ -293,7 +291,7 @@ def init_commands(kernel):
 
     @self.console_command(
         "select^",
-        help="select^ : " + _("Toggle the input data in the selection"),
+        help=_("Toggle the input data in the selection"),
         input_type="ops",
         output_type="ops",
     )
@@ -516,7 +514,7 @@ def init_commands(kernel):
     )
     @self.console_command(
         "id",
-        help="id <id> : " + _("set or get the id of the elements"),
+        help=_("id <id>"),
         input_type=("ops", "elements"),
         output_type=("elements", "ops"),
     )
@@ -540,7 +538,7 @@ def init_commands(kernel):
             e.id = id
         self.validate_ids()
         self.signal("element_property_update", data)
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         return data_type, data
 
     @self.console_argument(
@@ -550,7 +548,7 @@ def init_commands(kernel):
     )
     @self.console_command(
         "label",
-        help="label <label> : " + _("set or get the label of the elements"),
+        help=_("label <label>"),
         input_type=("ops", "elements"),
         output_type=("elements", "ops"),
     )
@@ -577,7 +575,7 @@ def init_commands(kernel):
         for e in data:
             e.label = label
         self.signal("element_property_update", data)
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         return data_type, data
 
     @self.console_command(
@@ -589,18 +587,17 @@ def init_commands(kernel):
     def operation_empty(channel, _, data=None, **kwargs):
         if data is None:
             data = list()
-            for item in list(self.ops(selected=True, cascade=False)):
+            for item in list(self.flat(selected=True, cascade=False, types=op_nodes)):
                 data.append(item)
         # _("Clear operations")
         with self.undoscope("Clear operations"):
             index_ops = list(self.ops())
-            with self.node_lock:
-                for item in data:
-                    i = index_ops.index(item)
-                    select_piece = "*" if item.emphasized else " "
-                    name = f"{select_piece} {i}: {str(item)}"
-                    channel(f"{name}: {len(item.children)}")
-                    item.remove_all_children()
+            for item in data:
+                i = index_ops.index(item)
+                select_piece = "*" if item.emphasized else " "
+                name = f"{select_piece} {i}: {str(item)}"
+                channel(f"{name}: {len(item.children)}")
+                item.remove_all_children()
         self.signal("rebuild_tree", "operations")
 
     @self.console_command(
@@ -713,37 +710,36 @@ def init_commands(kernel):
         if parallel:
             if data is None:
                 return "op", []
-            with self.node_lock:
-                for item in data:
-                    op = make_op()
-                    if color is not None:
-                        op.color = color
-                    elif fill:
-                        try:
-                            op.color = item.fill
-                        except AttributeError:
-                            continue
-                    elif stroke:
-                        try:
-                            op.color = item.stroke
-                        except AttributeError:
-                            continue
-                    if default is not None:
-                        op.default = default
-                    if speed is not None:
-                        op.speed = speed
-                    if power is not None:
-                        op.power = power
-                    if passes is not None:
-                        op.passes_custom = True
-                        op.passes = passes
-                    if dpi is not None:
-                        op.dpi = dpi
-                    if overscan is not None:
-                        op.overscan = overscan
-                    self.add_op(op)
-                    op.add_reference(item)
-                    op_list.append(op)
+            for item in data:
+                op = make_op()
+                if color is not None:
+                    op.color = color
+                elif fill:
+                    try:
+                        op.color = item.fill
+                    except AttributeError:
+                        continue
+                elif stroke:
+                    try:
+                        op.color = item.stroke
+                    except AttributeError:
+                        continue
+                if default is not None:
+                    op.default = default
+                if speed is not None:
+                    op.speed = speed
+                if power is not None:
+                    op.power = power
+                if passes is not None:
+                    op.passes_custom = True
+                    op.passes = passes
+                if dpi is not None:
+                    op.dpi = dpi
+                if overscan is not None:
+                    op.overscan = overscan
+                self.add_op(op)
+                op.add_reference(item)
+                op_list.append(op)
         else:
             op = make_op()
             if color is not None:
@@ -771,11 +767,10 @@ def init_commands(kernel):
                 op.dpi = dpi
             if overscan is not None:
                 op.overscan = overscan
-            with self.node_lock:
-                self.add_op(op)
-                if data is not None:
-                    for item in data:
-                        op.add_reference(item)
+            self.add_op(op)
+            if data is not None:
+                for item in data:
+                    op.add_reference(item)
             op_list.append(op)
         return "ops", op_list
 
@@ -796,8 +791,7 @@ def init_commands(kernel):
         time=None,
         **kwargs,
     ):
-        with self.node_lock:
-            op = self.op_branch.add(type="util wait", wait=time)
+        op = self.op_branch.add(type="util wait", wait=time)
         return "ops", [op]
 
     @self.console_argument(
@@ -824,15 +818,14 @@ def init_commands(kernel):
         value=None,
         **kwargs,
     ):
-        with self.node_lock:
-            if command == "inputop":
-                op = self.op_branch.add(
-                    type="util input", input_mask=mask, input_value=value
-                )
-            else:
-                op = self.op_branch.add(
-                    type="util output", output_mask=mask, output_value=value
-                )
+        if command == "inputop":
+            op = self.op_branch.add(
+                type="util input", input_mask=mask, input_value=value
+            )
+        else:
+            op = self.op_branch.add(
+                type="util output", output_mask=mask, output_value=value
+            )
         return "ops", [op]
 
     @self.console_argument(
@@ -870,8 +863,7 @@ def init_commands(kernel):
             # fmt: on
         except ValueError:
             raise CommandSyntaxError(_("Invalid length value."))
-        with self.node_lock:
-            op = self.op_branch.add(type="util goto", x=sx, y=sy)
+        op = self.op_branch.add(type="util goto", x=sx, y=sy)
         return "ops", [op]
 
     @self.console_command(
@@ -884,8 +876,7 @@ def init_commands(kernel):
         **kwargs,
     ):
         if remainder is not None:
-            with self.node_lock:
-                op = self.op_branch.add(type="util console", command=remainder)
+            op = self.op_branch.add(type="util console", command=remainder)
             return "ops", [op]
 
     @self.console_argument("dpi", type=int, help=_("raster dpi"))
@@ -927,10 +918,7 @@ def init_commands(kernel):
     )
     @self.console_argument("speed", type=str, help=_("operation speed in mm/s"))
     @self.console_command(
-        "speed",
-        help="speed <speed> : " + _("set the operation speed"),
-        input_type="ops",
-        output_type="ops",
+        "speed", help=_("speed <speed>"), input_type="ops", output_type="ops"
     )
     def op_speed(
         command,
@@ -1005,10 +993,7 @@ def init_commands(kernel):
         help=_("Change power for each item in order"),
     )
     @self.console_command(
-        "power",
-        help="power <ppi> : " + _("set the operation power"),
-        input_type="ops",
-        output_type="ops",
+        "power", help=_("power <ppi>"), input_type="ops", output_type="ops"
     )
     def op_power(
         command,
@@ -1070,10 +1055,7 @@ def init_commands(kernel):
         help=_("Change speed for each item in order"),
     )
     @self.console_command(
-        "frequency",
-        help="frequency <kHz> : " + _("set the operation frequency"),
-        input_type="ops",
-        output_type="ops",
+        "frequency", help=_("frequency <kHz>"), input_type="ops", output_type="ops"
     )
     def op_frequency(
         command,
@@ -1117,10 +1099,7 @@ def init_commands(kernel):
 
     @self.console_argument("passes", type=int, help=_("Set operation passes"))
     @self.console_command(
-        "passes",
-        help="passes <passes> : " + _("set the operation passes"),
-        input_type="ops",
-        output_type="ops",
+        "passes", help=_("passes <passes>"), input_type="ops", output_type="ops"
     )
     def op_passes(command, channel, _, passes=None, data=None, **kwrgs):
         if passes is None:
@@ -1164,8 +1143,7 @@ def init_commands(kernel):
     )
     @self.console_command(
         "hatch-distance",
-        help="hatch-distance <distance> : "
-        + _("set the hatch distance of the hatch operation"),
+        help=_("hatch-distance <distance>"),
         input_type="ops",
         output_type="ops",
     )
@@ -1181,8 +1159,6 @@ def init_commands(kernel):
     ):
         if distance is None:
             for op in data:
-                if not hasattr(op, "hatch_distance"):
-                    continue
                 old = op.hatch_distance
                 channel(
                     _("Hatch Distance for '{name}' is currently: {distance}").format(
@@ -1192,8 +1168,6 @@ def init_commands(kernel):
             return
         delta = 0
         for op in data:
-            if not hasattr(op, "hatch_distance"):
-                continue
             old = Length(op.hatch_distance)
             if progress:
                 s = float(old) + delta
@@ -1230,7 +1204,7 @@ def init_commands(kernel):
     )
     @self.console_command(
         "hatch-angle",
-        help="hatch-angle <angle> : " + _("set the hatch angle of the hatch operation"),
+        help=_("hatch-angle <angle>"),
         input_type="ops",
         output_type="ops",
     )
@@ -1246,8 +1220,6 @@ def init_commands(kernel):
     ):
         if angle is None:
             for op in data:
-                if not hasattr(op, "hatch_angle"):
-                    continue
                 old = Angle(op.hatch_angle, digits=4).angle_turns
                 old_hatch_angle_deg = Angle(op.hatch_angle, digits=4).angle_degrees
                 channel(
@@ -1258,8 +1230,6 @@ def init_commands(kernel):
             return
         delta = 0
         for op in data:
-            if not hasattr(op, "hatch_angle"):
-                continue
             try:
                 old = Angle(op.hatch_angle)
             except AttributeError:
@@ -1347,7 +1317,7 @@ def init_commands(kernel):
         for e in data:
             e.lock = True
         self.signal("element_property_update", data)
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         return "elements", data
 
     @self.console_command(
@@ -1363,7 +1333,7 @@ def init_commands(kernel):
             if hasattr(e, "lock"):
                 e.lock = False
         self.signal("element_property_update", data)
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         return "elements", data
 
     @self.console_option(
@@ -1454,8 +1424,7 @@ def init_commands(kernel):
                 if tx != 0 or ty != 0:
                     matrix = Matrix.translate(tx, ty)
                     e.matrix *= matrix
-                with self.node_lock:
-                    newnode = self.elem_branch.add_node(e)
+                newnode = self.elem_branch.add_node(e)
                 if self.copy_increases_wordlist_references and hasattr(newnode, "text"):
                     newnode.text = self.wordlist_delta(newnode.text, delta_wordlist)
                 elif self.copy_increases_wordlist_references and hasattr(
@@ -1466,7 +1435,7 @@ def init_commands(kernel):
                         property_op(self.kernel.root, newnode)
             # Newly created! Classification needed?
             post.append(classify_new(add_elem))
-            self.refresh_signal()
+            self.signal("refresh_scene", "Scene")
             return "elements", add_elem
 
     @self.console_command(
@@ -1555,11 +1524,8 @@ def init_commands(kernel):
     # REGMARK COMMANDS
     # ==========
     def move_nodes_to(target, nodes):
-        with self.node_lock:
-            target.drop_multi(nodes)
-        # Signal tree rebuild after batch operation
-        if nodes:
-            self.signal("rebuild_tree", "all")
+        for elem in nodes:
+            target.drop(elem)
 
     @self.console_argument("cmd", type=str, help=_("free, clear, add"))
     @self.console_command(
@@ -1873,8 +1839,7 @@ def init_commands(kernel):
                     el = el[:idx]
                 node_label = el
                 break
-        with self.node_lock:
-            node = self.elem_branch.add(type="elem path", label=node_label)
+        node = self.elem_branch.add(type="elem path", label=node_label)
         first = True
         for e in data:
             try:
@@ -1942,42 +1907,41 @@ def init_commands(kernel):
         groups = []
         # _("Break elements")
         with self.undoscope("Break elements"):
-            with self.node_lock:
-                for node in data:
-                    node_label = node.label
-                    node_attributes = {}
-                    for attrib in ("stroke", "fill", "stroke_width", "stroke_scaled"):
-                        if hasattr(node, attrib):
-                            oldval = getattr(node, attrib, None)
-                            node_attributes[attrib] = oldval
-                    group_node = node.replace_node(
-                        type="group", label=node_label, expanded=True
+            for node in data:
+                node_label = node.label
+                node_attributes = {}
+                for attrib in ("stroke", "fill", "stroke_width", "stroke_scaled"):
+                    if hasattr(node, attrib):
+                        oldval = getattr(node, attrib, None)
+                        node_attributes[attrib] = oldval
+                group_node = node.replace_node(
+                    type="group", label=node_label, expanded=True
+                )
+                groups.append(group_node)
+                try:
+                    if hasattr(node, "final_geometry"):
+                        geometry = node.final_geometry()
+                    else:
+                        geometry = node.as_geometry()
+                    geometry.ensure_proper_subpaths()
+                except AttributeError:
+                    continue
+                idx = 0
+                for subpath in geometry.as_subpaths():
+                    subpath.ensure_proper_subpaths()
+                    idx += 1
+                    subnode = group_node.add(
+                        geometry=subpath,
+                        type="elem path",
+                        label=f"{node_label}-{idx}",
+                        stroke=node_attributes.get("stroke", None),
+                        fill=node_attributes.get("fill", None),
                     )
-                    groups.append(group_node)
-                    try:
-                        if hasattr(node, "final_geometry"):
-                            geometry = node.final_geometry()
-                        else:
-                            geometry = node.as_geometry()
-                        geometry.ensure_proper_subpaths()
-                    except AttributeError:
-                        continue
-                    idx = 0
-                    for subpath in geometry.as_subpaths():
-                        subpath.ensure_proper_subpaths()
-                        idx += 1
-                        subnode = group_node.add(
-                            geometry=subpath,
-                            type="elem path",
-                            label=f"{node_label}-{idx}",
-                            stroke=node_attributes.get("stroke", None),
-                            fill=node_attributes.get("fill", None),
-                        )
-                        for key, value in node_attributes.items():
-                            setattr(subnode, key, value)
+                    for key, value in node_attributes.items():
+                        setattr(subnode, key, value)
 
-                        elems.append(subnode)
-                    elements_nodes.append(group_node)
+                    elems.append(subnode)
+                elements_nodes.append(group_node)
         post.append(classify_new(elems))
         self.signal("element_property_reload", groups)
         return "elements", elements_nodes

@@ -85,9 +85,8 @@ def init_commands(kernel):
         matrix.post_translate(bounds[0], bounds[1])
 
         image_node = ImageNode(image=image, matrix=matrix, dpi=dpi)
-        with self.node_lock:
-            self.elem_branch.add_node(image_node)
-        self.refresh_signal()
+        self.elem_branch.add_node(image_node)
+        self.signal("refresh_scene", "Scene")
         data = [image_node]
         # Newly created! Classification needed?
         post.append(classify_new(data))
@@ -253,19 +252,18 @@ def init_commands(kernel):
         matrix = Matrix.scale(width / new_width, height / new_height)
         matrix.post_translate(bounds[0], bounds[1])
         path.transform *= Matrix(matrix)
-        with self.node_lock:
-            node = self.elem_branch.add(
-                path=abs(path),
-                stroke_width=500,
-                stroke_scaled=False,
-                type="elem path",
-                fillrule=Fillrule.FILLRULE_NONZERO,
-                linejoin=Linejoin.JOIN_ROUND,
-            )
+        node = self.elem_branch.add(
+            path=abs(path),
+            stroke_width=500,
+            stroke_scaled=False,
+            type="elem path",
+            fillrule=Fillrule.FILLRULE_NONZERO,
+            linejoin=Linejoin.JOIN_ROUND,
+        )
         # Newly created! Classification needed?
         data_out = [node]
         post.append(classify_new(data_out))
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         kernel.busyinfo.end()
         return "elements", data_out
 
@@ -471,10 +469,9 @@ def init_commands(kernel):
                     e.stroke_width = UNITS_PER_PIXEL
                 mydata.append(e)
         if debug:
-            with self.node_lock:
-                for node in mydata:
-                    node.label = "Phase 0: Initial copy"
-                    self.elem_branch.add_node(node)
+            for node in mydata:
+                node.label = "Phase 0: Initial copy"
+                self.elem_branch.add_node(node)
 
         ###############################################
         # Phase 1: render and vectorize first outline
@@ -543,9 +540,8 @@ def init_commands(kernel):
         # If you want to debug the phases then uncomment the following lines to
         # see the interim path and interim render image
         if debug:
-            with self.node_lock:
-                self.elem_branch.add_node(data_node)
-                self.elem_branch.add_node(image_node_1)
+            self.elem_branch.add_node(data_node)
+            self.elem_branch.add_node(image_node_1)
 
         copy_data = [image_node_1, data_node]
 
@@ -623,9 +619,8 @@ def init_commands(kernel):
             # If you want to debug the phases then uncomment the following line to
             # see the interim image
             if debug:
-                with self.node_lock:
-                    self.elem_branch.add_node(image_node_2)
-                    self.elem_branch.add_node(data_node_2)
+                self.elem_branch.add_node(image_node_2)
+                self.elem_branch.add_node(data_node_2)
             #######################################################
             # Phase 3: render and vectorize last outline for outer
             #######################################################
@@ -651,8 +646,7 @@ def init_commands(kernel):
                     # If you want to debug the phases then uncomment the following lines to
                     # see the interim path nodes
                     if debug:
-                        with self.node_lock:
-                            self.elem_branch.add_node(data_node)
+                        self.elem_branch.add_node(data_node)
 
                 bounds = Node.union_bounds(copy_data, attr="paint_bounds")
                 # bounds_regular = Node.union_bounds(data)
@@ -701,24 +695,23 @@ def init_commands(kernel):
                 matrix.post_translate(bounds[0], bounds[1])
                 path_final.transform *= Matrix(matrix)
 
-            with self.node_lock:
-                outline_node = self.elem_branch.add(
-                    path=abs(path_final),
-                    stroke_width=500,
-                    stroke_scaled=False,
-                    type="elem path",
-                    fill=None,
-                    stroke=pathcolor,
-                    # fillrule=Fillrule.FILLRULE_NONZERO,
-                    linejoin=Linejoin.JOIN_ROUND,
-                    label=f"Outline path #{numidx}",
-                )
+            outline_node = self.elem_branch.add(
+                path=abs(path_final),
+                stroke_width=500,
+                stroke_scaled=False,
+                type="elem path",
+                fill=None,
+                stroke=pathcolor,
+                # fillrule=Fillrule.FILLRULE_NONZERO,
+                linejoin=Linejoin.JOIN_ROUND,
+                label=f"Outline path #{numidx}",
+            )
             outline_node.fill = None
             outputdata.append(outline_node)
 
         # Newly created! Classification needed?
         post.append(classify_new(outputdata))
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         kernel.busyinfo.end()
         if len(outputdata) > 0:
             self.signal("element_property_update", outputdata)
@@ -780,7 +773,7 @@ def init_commands(kernel):
                 channel(f"Could not register keyhole: {e}")
                 return
         self.process_keyhole_updates(None)
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         return "elements", images
 
     @self.console_command(
@@ -805,7 +798,7 @@ def init_commands(kernel):
                 self.deregister_keyhole(rid, node)
         self.process_keyhole_updates(None)
 
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         return "elements", images
 
     # --------------------------- END COMMANDS ------------------------------

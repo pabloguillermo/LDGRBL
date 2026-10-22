@@ -123,7 +123,7 @@ class TrueTypeFont:
 
     @staticmethod
     def query_name(filename):
-        def get_string(f, off, length, platform_id, platform_specific_id, filename):
+        def get_string(f, off, length):
             string = None
             try:
                 location = f.tell()
@@ -132,56 +132,12 @@ class TrueTypeFont:
                 f.seek(location)
                 if string is None:
                     return ""
-                
-                # Handle platform-specific encodings
-                if platform_id == 0:  # Unicode
-                    return string.decode("UTF-16BE")
-                elif platform_id == 1:  # Macintosh
-                    if platform_specific_id == 0:  # MacRoman
-                        # Some Mac fonts incorrectly use UTF-8 in MacRoman fields
-                        # Since mac_roman decoding never fails (maps all bytes),
-                        # we must try UTF-8 first to correctly handle these cases.
-                        try:
-                            return string.decode("UTF-8")
-                        except UnicodeDecodeError:
-                            return string.decode("mac_roman")
-                    else:
-                        # Other Macintosh encodings, try UTF-8
-                        return string.decode("UTF-8")
-                elif platform_id == 3:  # Windows
-                    return string.decode("UTF-16BE")
-                else:
-                    # Unknown platform, try UTF-16BE first
-                    return string.decode("UTF-16BE")
+                return string.decode("UTF-16BE")
             except UnicodeDecodeError:
                 try:
-                    decoded = string.decode("UTF8") if string is not None else ""
-                    # Check if the decoded string looks like binary garbage
-                    # If it contains non-printable characters or looks like raw bytes, use fallback
-                    # Heuristic for detecting binary garbage, but allow valid non-Latin scripts
-                    # Only reject if we have clear signs of corrupted data:
-                    # - Contains null bytes
-                    # - Majority of characters are control characters (excluding common whitespace)
-                    # - String is suspiciously short with only control characters
-                    if len(decoded) > 0:
-                        control_char_count = sum(1 for c in decoded if ord(c) < 32 and c not in '\t\n\r')
-                        null_byte_count = decoded.count('\x00')
-                        
-                        # Reject if:
-                        # 1. Contains null bytes (clear sign of corruption)
-                        # 2. More than 50% control characters (excluding tabs/newlines)
-                        # 3. Very short string (< 3 chars) that's all control characters
-                        if (null_byte_count > 0 or
-                            (len(decoded) > 0 and control_char_count / len(decoded) > 0.5) or
-                            (len(decoded) < 3 and control_char_count == len(decoded))):
-                            # Return file basename as fallback to help identify problematic files
-                            import os
-                            return f"[{os.path.basename(filename)}]"
-                    return decoded
+                    return string.decode("UTF8") if string is not None else ""
                 except UnicodeDecodeError:
-                    # Return file basename as fallback to help identify problematic files
-                    import os
-                    return f"[{os.path.basename(filename)}]"
+                    return string if string is not None else ""
 
         try:
             with open(filename, "rb") as f:
@@ -229,11 +185,11 @@ class TrueTypeFont:
                     ) = struct.unpack(">HHHHHH", f.read(2 * 6))
                     pos = table_start + strings_offset + record_offset
                     if name_id == 1:
-                        font_family = get_string(f, pos, length, platform_id, platform_specific_id, filename)
+                        font_family = get_string(f, pos, length)
                     elif name_id == 2:
-                        font_subfamily = get_string(f, pos, length, platform_id, platform_specific_id, filename)
+                        font_subfamily = get_string(f, pos, length)
                     elif name_id == 4:
-                        font_name = get_string(f, pos, length, platform_id, platform_specific_id, filename)
+                        font_name = get_string(f, pos, length)
                     if font_family and font_subfamily and font_name:
                         break
                 return font_family, font_subfamily, font_name
@@ -1251,8 +1207,7 @@ class TrueTypeFont:
                 try:
                     return string.decode("UTF8")
                 except UnicodeDecodeError:
-                    # Return a safe fallback instead of raw bytes
-                    return "Undecodable Font Name"
+                    return string
 
         data = self._raw_tables[b"name"]
         b = BytesIO(data)

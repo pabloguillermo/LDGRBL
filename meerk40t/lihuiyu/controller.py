@@ -192,9 +192,7 @@ class LihuiyuController:
         self.usb_log = service.channel(f"{name}/usb", buffer_size=500)
         self.usb_send_channel = service.channel(f"{name}/usb_send")
         self.recv_channel = service.channel(f"{name}/recv")
-        # Keep reference to prevent garbage collection with weak=True default
-        self._usb_status_handler = lambda e: service.signal("pipe;usb_status", e)
-        self.usb_log.watch(self._usb_status_handler)
+        self.usb_log.watch(lambda e: service.signal("pipe;usb_status", e))
         self.reset()
 
     @property
@@ -760,9 +758,7 @@ class LihuiyuController:
                 # We'll try to confirm this at 500 times.
                 try:
                     self.update_status()
-                    # Make sure we have a valid status
-                    if self._status is not None and len(self._status) > 1:
-                        status = self._status[1]
+                    status = self._status[1]
                     if attempts > 10:
                         time.sleep(min(0.001 * attempts, 0.1))
                 except ConnectionError:

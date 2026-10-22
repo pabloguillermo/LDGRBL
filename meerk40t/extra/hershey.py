@@ -7,8 +7,8 @@ from os.path import basename, exists, join, realpath, splitext
 from meerk40t.core.node.elem_path import PathNode
 from meerk40t.core.node.node import Fillrule, Linejoin
 from meerk40t.core.units import UNITS_PER_INCH, Length
-from meerk40t.core.geomstr import BeamTable, Geomstr
-from meerk40t.tools.jhfparser import JhfFont, SimplexFont, STD_FONT_FILE
+from meerk40t.tools.geomstr import BeamTable, Geomstr
+from meerk40t.tools.jhfparser import JhfFont
 from meerk40t.tools.shxparser import ShxFont, ShxFontParseError
 from meerk40t.tools.ttfparser import TrueTypeFont, TTFParsingError
 
@@ -105,10 +105,6 @@ class Meerk40tFonts:
         self._available_fonts = None
 
     @property
-    def std_font_file(self):
-        return STD_FONT_FILE
-    
-    @property
     def fonts_registered(self):
         fonts = {
             "shx": ("Autocad", ShxFont, None),
@@ -156,8 +152,6 @@ class Meerk40tFonts:
 
     @lru_cache(maxsize=512)
     def get_font_information(self, full_file_name):
-        if full_file_name == STD_FONT_FILE:
-            return STD_FONT_FILE
         filename, file_extension = splitext(full_file_name)
         if len(file_extension) == 0:
             return None
@@ -177,14 +171,6 @@ class Meerk40tFonts:
         for info in p:
             # We don't care about capitalisation
             f_lower = info[0].lower()
-            if f_lower.endswith(s_lower):
-                return info
-        # Hmm, we did not find it - there's a special case though, replace "-" with " " to see whether this helps
-        s_lower = s_lower.replace("-", " ")
-        for info in p:
-            # We don't care about capitalisation
-            f_lower = info[0].lower()
-            f_lower = f_lower.replace("-", " ")
             if f_lower.endswith(s_lower):
                 return info
         return None
@@ -226,8 +212,6 @@ class Meerk40tFonts:
 
     @lru_cache(maxsize=128)
     def cached_fontclass(self, fontname):
-        if fontname == STD_FONT_FILE:
-            return SimplexFont("")
         registered_fonts = self.fonts_registered
         if not exists(fontname):
             return
@@ -424,8 +408,6 @@ class Meerk40tFonts:
         for fname in candidates:
             if self._validate_font(fname):
                 return self.full_name(fname)
-        # lets fallback to our internal font if nothing else works
-        
         return None
 
     def _try_available(self):
@@ -468,14 +450,7 @@ class Meerk40tFonts:
         return font, font_path
 
     def create_linetext_node(
-        self,
-        x,
-        y,
-        text,
-        font=None,
-        font_size=None,
-        font_spacing=1.0,
-        align="start",
+        self, x, y, text, font=None, font_size=None, font_spacing=1.0, align="start",
     ):
         if font_size is None:
             font_size = Length("20px")
@@ -502,14 +477,7 @@ class Meerk40tFonts:
             path = FontPath(weld)
             # print (f"Path={path}, text={remainder}, font-size={font_size}")
             mytext = self.context.elements.wordlist_translate(text)
-            cfont.render(
-                path,
-                mytext,
-                horizontal=horizontal,
-                font_size=float(font_size),
-                h_spacing=font_spacing,
-                align=align,
-            )
+            cfont.render(path, mytext, horizontal=horizontal, font_size=float(font_size), h_spacing=font_spacing, align=align)
         except (AttributeError, ShxFontParseError):
             # Could not parse path.
             pass
@@ -611,39 +579,6 @@ class Meerk40tFonts:
             bitmap.LoadFile(bmpfile, wx.BITMAP_TYPE_PNG)
         return bitmap
 
-    def _validate_cache_entry(self, entry):
-        """
-        Validate a single cache entry for invalid characters.
-        
-        @param entry: Tuple of (full_path, display_name, family, subfamily, is_system)
-        @return: True if valid, False if contains invalid characters
-        """
-        if not isinstance(entry, tuple) or len(entry) != 5:
-            return False
-            
-        full_path, display_name, family, subfamily, is_system = entry
-        
-        # Check that all string fields are actually strings and not empty
-        # full_path and display_name must be present and not empty
-        if not isinstance(full_path, str) or not full_path.strip():
-            return False
-        if not isinstance(display_name, str) or not display_name.strip():
-            return False
-            
-        # family and subfamily can be empty strings (some fonts miss this info)
-        # but they must be strings
-        if not isinstance(family, str):
-            return False
-        if not isinstance(subfamily, str):
-            return False
-        
-        # Check for non-printable characters in display_name (most likely to be garbled)
-        for char in display_name:
-            if not char.isprintable():
-                return False
-        
-        return True
-
     def available_fonts(self):
         if self._available_fonts is not None:
             return self._available_fonts
@@ -656,7 +591,6 @@ class Meerk40tFonts:
         self._available_fonts = []
 
         cache = self.cache_file
-        cache_valid = True
         if exists(cache):
             try:
                 with open(cache, "r", encoding="utf-8") as f:
@@ -668,40 +602,20 @@ class Meerk40tFonts:
                         parts = line.split("|")
                         if len(parts) > 4:
                             flag = False
-                            if parts[4].lower() in ("true", "1"):
+                            if parts[4].lower in ("true", "1"):
                                 flag = True
-                            entry = (
-                                parts[0],
-                                parts[1],
-                                parts[2],
-                                parts[3],
-                                flag,
+                            self._available_fonts.append(
+                                (
+                                    parts[0],
+                                    parts[1],
+                                    parts[2],
+                                    parts[3],
+                                    flag,
+                                )
                             )
-                            # Validate the cache entry
-                            if not self._validate_cache_entry(entry):
-                                cache_valid = False
-                                break
-                            self._available_fonts.append(entry)
-            except (OSError, FileNotFoundError, PermissionError, UnicodeDecodeError):
-                cache_valid = False
+            except (OSError, FileNotFoundError, PermissionError):
                 self._available_fonts = []
-            
-            if not cache_valid:
-                # Cache contains invalid data, remove it so it gets rebuilt
-                try:
-                    os.remove(cache)
-                except (OSError, FileNotFoundError, PermissionError):
-                    pass
-                # Also clear the LRU cache for get_font_information since it might contain old data
-                self.get_font_information.cache_clear()
-                self._available_fonts = []
-            elif len(self._available_fonts):
-                # Check that the std font is present
-                if not any(f[0] == STD_FONT_FILE for f in self._available_fonts):
-                    self._available_fonts.insert(
-                        0,
-                        (STD_FONT_FILE, "MeerK40t Simple", "Hershey", "Regular", False)
-                    )
+            if len(self._available_fonts):
                 # t1 = perf_counter()
                 # print (f"Cached, took {t1 - t0:.2f}sec")
                 return self._available_fonts
@@ -765,7 +679,6 @@ class Meerk40tFonts:
                 continue
             # for key, value in found.items():
             #     print(f"{key}: {value} - {fontpath}")
-        self._available_fonts.append( (STD_FONT_FILE, "MeerK40t Simple", "Hershey", "Regular", False) )
         self._available_fonts.sort(key=lambda e: e[1])
         try:
             with open(cache, "w", encoding="utf-8") as f:
@@ -840,6 +753,7 @@ def plugin(kernel, lifecycle):
         ):
             kernel.register(f"registered_mk_svg_parameters/font{idx}", attrib)
 
+
         @context.console_argument("x", type=Length, help=_("X-Coordinate"))
         @context.console_argument("y", type=Length, help=_("Y-Coordinate"))
         @context.console_argument("text", type=str, help=_("Text to render"))
@@ -855,7 +769,7 @@ def plugin(kernel, lifecycle):
             help=_("Character spacing factor"),
         )
         @context.console_command(
-            "linetext", help="linetext <font> <font_size> <text> : " + _("Render vector text")
+            "linetext", help=_("linetext <font> <font_size> <text>")
         )
         def linetext(
             command,
@@ -871,9 +785,7 @@ def plugin(kernel, lifecycle):
             **kwargs,
         ):
             if x is None or y is None or text is None:
-                channel(
-                    "linetext <x> <y> <text> - " + _("please provide all required arguments")
-                )
+                channel(_("linetext <x> <y> <text> - please provide all required arguments"))
                 registered_fonts = context.fonts.available_fonts()
                 for item in registered_fonts:
                     channel(f"{item[1]} ({item[0]})")
@@ -887,6 +799,7 @@ def plugin(kernel, lifecycle):
             if text is None or text == "":
                 channel(_("No text given."))
                 return
+
 
             if font_spacing is None:
                 font_spacing = 1

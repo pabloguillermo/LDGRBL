@@ -10,8 +10,8 @@ class ToolContainer(Widget):
     Widget used to contain particular tools within the scene.
     """
 
-    def __init__(self, scene, **kwargs):
-        Widget.__init__(self, scene, all=False, **kwargs)
+    def __init__(self, scene):
+        Widget.__init__(self, scene, all=False)
         self._active_tool = "unset"
         self._tool_mode = "unset"
         # Selection/Manipulation widget.

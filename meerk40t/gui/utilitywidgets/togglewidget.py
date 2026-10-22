@@ -13,8 +13,8 @@ _ = wx.GetTranslation
 
 
 class ToggleWidget(Widget):
-    def __init__(self, scene, left, top, right, bottom, bitmap, buttons, **kwargs):
-        Widget.__init__(self, scene, left, top, right, bottom, **kwargs)
+    def __init__(self, scene, left, top, right, bottom, bitmap, buttons):
+        Widget.__init__(self, scene, left, top, right, bottom)
         self.buttons = buttons
         self.bitmap = bitmap
         self._opened = False

@@ -5,6 +5,7 @@ and listing all the nodes a tree-op would apply to can result in a very long lis
 These are those long list.
 """
 
+
 non_structural_nodes = (
     "op cut",
     "op raster",
@@ -52,7 +53,7 @@ op_vector_nodes = (
     "op cut",
     "op engrave",
 )
-op_burnable_nodes = (
+op_burnable_nodes =(
     "op cut",
     "op engrave",
     "op dots",

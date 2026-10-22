@@ -24,80 +24,39 @@ Plugins are classified as follows:
 
 Core modules are largely tools and classes that define Meerk40t specific ecosystem requirements within the kernel.
 
-## Device Drivers
+## Devices
 
-Device driver modules provide hardware-specific implementations for different laser controllers and cutting systems.
+Device modules are specific to laser cutting and the lower level interactions with laser cutter drivers.
 
-### balormk
-JCZ controllers for galvo-based laser systems.
+## DXF
 
-### grbl
-GRBL-compatible devices including popular brands like Ortur, Atomstack, and Creality.
+DXF modules deal with Digital Exchange Format files.
 
-### lihuiyu
-Lihuiyu M2/M3-Nano controllers (K40 laser systems).
+## Extra
 
-### moshi
-Moshiboard laser controllers.
+Extra modules provide non-core functionality.
 
-### newly
-NewlyDraw System 8.1 laser controllers.
+## Gui
 
-### ruida
-Ruida laser controllers and emulators.
+The Gui modules require wxPython and deal with the graphical interactions between the user and the software.
 
-## Hardware Abstraction
+## Image
 
-### camera
-Camera integration and image capture functionality.
+Image modules are tools dealing with Pillow (Python Image Library).
 
-### ch341
-CH341 USB interface chip support for hardware communication.
+## Tools
 
-### device
-Hardware abstraction layer providing unified interfaces for device management.
-
-## Specialized Features
-
-### cylinder
-Galvo correction and coordinate transformation for cylindrical engraving.
-
-### fill
-Hatch fill patterns, wobble effects, and living hinge generation.
-
-### rotary
-Rotary engraving support for cylindrical objects.
-
-## File Formats
-
-### dxf
-Digital Exchange Format (DXF) file processing and conversion.
-
-## User Interface
-
-### gui
-Graphical user interface modules using wxPython and AUI framework for highly configurable UI.
-
-## Image Processing
-
-### image
-Image processing tools using Pillow (Python Image Library) for laser engraving preparation.
+Tools are simple stand-alone datastructure/algorithms that perform non-kernel operations
+which may be considerably useful to many modules, or which simply do not require any ecosystem functionality.
 
 ## Network
 
-Network modules handle TCP and UDP socket communications for remote access and control.
-
-## Utilities
-
-### extra
-Additional non-core functionality and extended features.
-
-### tools
-Standalone data structures and algorithms for geometric operations, font processing, and optimization.
+The Server governs interactions within TCP and UDP sockets.
 
 ## Main
 
-The main file handles the command line interface for Meerk40t as well as loading and processing of different plugins, both internal and external.
+The main file deals with the CLI for Meerk40t as well as loading and processing of different plugins, both internal and
+external.
 
 ## svgelements
 

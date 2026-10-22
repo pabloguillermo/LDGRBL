@@ -90,7 +90,6 @@ class PropertyWindow(MWindow):
             except AttributeError:
                 name = instance.__class__.__name__
 
-            page_panel.Reparent(self.notebook_main)
             self.notebook_main.AddPage(page_panel, _(name))
             if hasattr(page_panel, "set_widgets"):
                 page_panel.set_widgets(instance)
@@ -161,14 +160,6 @@ class PropertyWindow(MWindow):
                     ):
                         pages_in_node.append((property_sheet, node))
                         found = True
-                if not found:
-                    # We try the more generic property sheets
-                    for property_sheet in self.context.lookup_all("property/Any/.*"):
-                        if not hasattr(property_sheet, "accepts") or property_sheet.accepts(
-                            node
-                        ):
-                            pages_in_node.append((property_sheet, node))
-                            found = True
                 # If we did not have any hits and the node is a reference
                 # then we fall back to the master. So if in the future we
                 # would have a property panel dealing with reference-nodes
@@ -248,12 +239,12 @@ class PropertyWindow(MWindow):
 
     @signal_listener("selected")
     def on_selected(self, origin, *args):
-        nodes = list(self.context.elements._tree.flat(selected=True, cascade=False))
+        nodes = list(self.context.elements.flat(selected=True, cascade=False))
         self.validate_display(nodes, "selected")
 
     @signal_listener("emphasized")
     def on_emphasized(self, origin, *args):
-        nodes = list(self.context.elements._tree.flat(emphasized=True, cascade=False))
+        nodes = list(self.context.elements.flat(emphasized=True, cascade=False))
         self.validate_display(nodes, "emphasized")
 
     @signal_listener("element_property_force")

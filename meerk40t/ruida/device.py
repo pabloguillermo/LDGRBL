@@ -4,11 +4,8 @@ Ruida Device
 Ruida device interfacing. We do not send or interpret ruida code, but we can emulate ruidacode into cutcode and read
 ruida files (*.rd) and turn them likewise into cutcode.
 """
-
-import inspect
-
 from meerk40t.core.view import View
-from meerk40t.device.devicechoices import get_effect_choices, get_operation_choices
+from meerk40t.device.devicechoices import get_effect_choices
 from meerk40t.kernel import CommandSyntaxError, Service, signal_listener
 
 from ..core.laserjob import LaserJob
@@ -16,12 +13,13 @@ from ..core.spoolers import Spooler
 from ..core.units import Length, uM_PER_INCH
 from ..device.mixins import Status
 from .driver import RuidaDriver
+from .mock_connection import MockConnection
+from .serial_connection import SerialConnection
+from .tcp_connection import TCPConnection
+from .udp_connection import UDPConnection
 
-from .ruidasession import RuidaSession
-from .ruidatransport import TransportError
 
-
-class RuidaDevice(Service, Status):
+class RuidaDevice(Service):
     """
     RuidaDevice is driver for the Ruida Controllers
     """
@@ -40,15 +38,6 @@ class RuidaDevice(Service, Status):
                     setattr(self, attr, default)
 
         # self.setting(str, "label", path)
-        # This device prefers to display power level in ppi
-        self.setting(bool, "use_percent_for_power_display", False)
-        self.setting(bool, "use_minute_for_speed_display", False)
-
-        def _use_percent_for_power():
-            return getattr(self, "use_percent_for_power_display", True)
-
-        def _use_minute_for_speed():
-            return getattr(self, "use_minute_for_speed_display", False)
 
         _ = self._
         choices = [
@@ -138,7 +127,7 @@ class RuidaDevice(Service, Status):
                 "section": "_10_" + _("Configuration"),
                 # Hint for translation _("User Offset")
                 "subsection": "_30_User Offset",
-                "ignore": True,  # Does not work yet, so don't show
+                "ignore": True, # Does not work yet, so don't show
             },
             {
                 "attr": "user_margin_y",
@@ -152,7 +141,7 @@ class RuidaDevice(Service, Status):
                 "section": "_10_" + _("Configuration"),
                 # Hint for translation _("User Offset")
                 "subsection": "_30_User Offset",
-                "ignore": True,  # Does not work yet, so don't show
+                "ignore": True, # Does not work yet, so don't show
             },
             {
                 "attr": "flip_x",
@@ -239,8 +228,7 @@ class RuidaDevice(Service, Status):
                 "default": 20.0,
                 "type": float,
                 "label": _("Laser Power"),
-                "style": "power",
-                "percent": _use_percent_for_power,
+                "trailer": "%",
                 "tip": _("What power level do we cut at?"),
             },
             {
@@ -248,8 +236,7 @@ class RuidaDevice(Service, Status):
                 "object": self,
                 "default": 40.0,
                 "type": float,
-                "style": "speed",
-                "perminute": _use_minute_for_speed,
+                "trailer": "mm/s",
                 "label": _("Cut Speed"),
                 "tip": _("How fast do we cut?"),
             },
@@ -257,15 +244,6 @@ class RuidaDevice(Service, Status):
         self.register_choices("ruida-global", choices)
 
         self.register_choices("ruida-effects", get_effect_choices(self))
-        self.register_choices(
-            "ruida-defaults",
-            get_operation_choices(
-                self,
-                default_cut_speed=5,
-                default_engrave_speed=25,
-                default_raster_speed=250,
-            ),
-        )
 
         choices = [
             {
@@ -386,9 +364,13 @@ class RuidaDevice(Service, Status):
 
         _ = self.kernel.translation
 
-        self.kernel.root.coolant.claim_coolant(self, self.device_coolant)
+        self.interface_mock = MockConnection(self)
+        self.interface_udp = UDPConnection(self)
+        self.interface_tcp = TCPConnection(self)
+        self.interface_usb = SerialConnection(self)
+        self.active_interface = None
 
-        self.active_session: RuidaSession = None
+        self.kernel.root.coolant.claim_coolant(self, self.device_coolant)
 
         @self.console_command(
             "interface_update",
@@ -396,25 +378,19 @@ class RuidaDevice(Service, Status):
             help=_("Updates interface state for the device."),
         )
         def interface_update(command, channel, _, data=None, **kwargs):
-            try:
-                if (
-                    self.active_session is not None
-                    and self.interface != self.active_session.interface
-                ):
-                    self.driver.controller.pause_monitor()
-                    self.active_session.shutdown()
-                    self.active_session = None
-
-                if self.active_session is None:  # Start or restart.
-                    self.active_session = RuidaSession(self)
-                    self.driver.controller.write = self.active_session.write
-                    _swizzle = self.driver.controller.job.swizzle
-                    _unswizzle = self.driver.controller.job.unswizzle
-                    self.active_session.set_swizzles(_swizzle, _unswizzle)
-                    self.active_session.open()
-                    self.driver.controller.resume_monitor()
-            except AttributeError as e:
-                channel(e)
+            if self.interface == "mock":
+                self.active_interface = self.interface_mock
+                self.driver.controller.write = self.interface_mock.write
+            elif self.interface == "udp":
+                self.active_interface = self.interface_udp
+                self.driver.controller.write = self.interface_udp.write
+            elif self.interface == "tcp":
+                # Special tcp out to lightburn bridge et al.
+                self.active_interface = self.interface_tcp
+                self.driver.controller.write = self.interface_tcp.write
+            elif self.interface == "usb":
+                self.active_interface = self.interface_usb
+                self.driver.controller.write = self.interface_usb.write
 
         @self.console_command(("estop", "abort"), help=_("Abort Job"))
         def pipe_abort(command, channel, _, data=None, **kwargs):
@@ -434,17 +410,6 @@ class RuidaDevice(Service, Status):
             self.signal("pause")
 
         @self.console_command(
-            "resume",
-            help=_("realtime resume of the machine"),
-        )
-        def realtime_resume(command, channel, _, data=None, **kwargs):
-            if self.driver.paused:
-                self.driver.resume()
-                self.signal("pause")
-            else:
-                channel(_("Device is not paused"))
-
-        @self.console_command(
             "ruida_connect",
             hidden=True,
             help=_("Connects to the device."),
@@ -452,7 +417,7 @@ class RuidaDevice(Service, Status):
         def ruida_connect(command, channel, _, data=None, **kwargs):
             if not self.connected:
                 try:
-                    self.active_session.open()
+                    self.active_interface.open()
                 except Exception as e:
                     channel(f"Could not establish the connection: {e}")
 
@@ -463,7 +428,7 @@ class RuidaDevice(Service, Status):
         )
         def ruida_disconnect(command, channel, _, data=None, **kwargs):
             if self.connected:
-                self.active_session.close()
+                self.active_interface.close()
                 channel("Connection closed")
 
         @self.console_command(
@@ -632,10 +597,6 @@ class RuidaDevice(Service, Status):
         name = self.label.replace(" ", "-")
         return name.replace("/", "-")
 
-    # TODO: Why here? Either remove or pass to the active session so it can
-    # query its transport layer.
-    # I think this is cruft as a result of mixing in emulation concerns with
-    # actual comms with a Ruida controller.
     @property
     def tcp_address(self):
         return self.address
@@ -644,11 +605,15 @@ class RuidaDevice(Service, Status):
     def tcp_port(self):
         return 5005
 
-    # End cruft
-
     def location(self):
-        if self.active_session:
-            return self.active_session.location()
+        if self.interface == "mock":
+            return "mock"
+        elif self.interface == "udp":
+            return "udp, port 40200"
+        elif self.interface == "tcp":
+            return f"tcp {self.tcp_address}:{self.tcp_port}"
+        elif self.interface == "usb":
+            return f"usb: {self.serial_port}"
         return f"undefined {self.interface}"
 
     @property
@@ -657,44 +622,22 @@ class RuidaDevice(Service, Status):
 
     @property
     def connected(self):
-        return self.active_session.connected if self.active_session else False
+        if self.active_interface:
+            return self.active_interface.connected
+        return False
 
     @property
     def is_connecting(self):
-        return self.active_session.is_connecting if self.active_session else False
-
-    def connect(self):
-        """
-        WARNING: this will not return until connected or error.
-        Call from a thread."""
-        if self.active_session:
-            try:
-                self.active_session.connect()
-            except TransportError:
-                pass
-
-    def update_connect_status(self):
-        if self.active_session is not None:
-            self.active_session.update_connect_status()
-        else:
-            self.signal("pipe;usb_status", "Disconnected")
+        if self.active_interface:
+            return self.active_interface.is_connecting
+        return False
 
     def abort_connect(self):
-        if self.active_session:
-            self.active_session.abort_connect()
+        if self.active_interface:
+            self.active_interface.abort_connect()
 
     def set_disable_connect(self, should_disable):
         pass
-
-    def set_timeout(self, seconds):
-        """Set the interface timeout.
-
-        Currently only the UDP interface supports this."""
-        self.active_session.set_timeout(seconds)
-
-    @property
-    def is_busy(self):
-        return self.active_session.is_busy
 
     def service_attach(self, *args, **kwargs):
         self.realize()
@@ -766,11 +709,3 @@ class RuidaDevice(Service, Status):
 
     def cool_helper(self, choice_dict):
         self.kernel.root.coolant.coolant_choice_helper(self)(choice_dict)
-
-    def get_operation_defaults(self, operation_type: str) -> dict:
-        """
-        Returns the default settings for a specific operation type.
-        """
-        settings = self.get_operation_power_speed_defaults(operation_type)
-        # Anything additional for the operation type can be added here
-        return settings

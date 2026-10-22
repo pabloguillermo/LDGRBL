@@ -13,11 +13,11 @@ from math import isinf
 
 import numpy as np
 
-from meerk40t.core.geomstr import Geomstr
 from meerk40t.core.node.node import Node
 from meerk40t.core.units import UNITS_PER_PIXEL, Length
 from meerk40t.kernel.jobs import Job
 from meerk40t.svgelements import Matrix
+from meerk40t.tools.geomstr import Geomstr
 
 
 class LiveLightJob:
@@ -56,7 +56,7 @@ class LiveLightJob:
         self.started = False
         self.priority = -1
         self.time_submitted = time.time()
-        self.time_started = None
+        self.time_started = time.time()
         self.runtime = 0
 
         # Update logic
@@ -65,7 +65,6 @@ class LiveLightJob:
         self.changed = False
         self.points = None
         self.bounded = False
-        self.uid = None
 
         methods = {
             "full": ("Full Light Job", self.update_full),
@@ -84,23 +83,6 @@ class LiveLightJob:
         self.changed = True
         self._last_bounds = None
         self.source = "elements"
-
-    # Generate a copy of the job for reinsertion after stopping
-    def copy_for_reinsertion(self):
-        copy_job = LiveLightJob(
-            service=self.service,
-            mode=self.mode,
-            geometry=self._geometry,
-            travel_speed=self._travel_speed,
-            jump_delay=self._jump_delay,
-            quantization=self.quantization,
-            listen=self.listen,
-            raw=self.raw,
-        )
-        copy_job.priority = self.priority
-        copy_job.label = self.label
-        copy_job.uid = self.uid
-        return copy_job
 
     @property
     def status(self):
@@ -135,7 +117,7 @@ class LiveLightJob:
         if self.runtime != 0:
             result = self.runtime
         elif self.is_running():
-            result = 0 if self.time_started is None else time.time() - self.time_started
+            result = time.time() - self.time_started
         return result
 
     def estimate_time(self):
@@ -226,8 +208,8 @@ class LiveLightJob:
             con: The connection to the laser controller.
         """
         con.light_mode()
-        delay_dark = self.service.redlight_delay_dark
-        delay_between = self.service.redlight_delay_light
+        delay_dark = self.service.delay_jump_long
+        delay_between = self.service.delay_jump_short
         move = True
         # We need to jump back to the first point
         first = True
@@ -274,17 +256,12 @@ class LiveLightJob:
         """
         if not self.listen:
             return
-        # Deletion fires element_removed/tree_changed. Without them a
-        # deleted shape keeps being traced by the live light job.
         for method in (
             "emphasized",
             "modified_by_tool",
             "updating",
             "view;realized",
             "update_group_labels",
-            "element_property_reload",
-            "element_removed",
-            "tree_changed",
         ):
             if start:
                 self.service.listen(method, self.on_emphasis_changed)
@@ -304,7 +281,6 @@ class LiveLightJob:
         self.setup_listen(True)
         self.time_started = time.time()
         self.started = True
-        self.service.job = self
         self._connection = driver.connection
         self._connection.rapid_mode()
         self._connection.light_mode()
@@ -312,7 +288,6 @@ class LiveLightJob:
         driver.service.signal_updates = False
         self.update()
         self.service.kernel.schedule(self.redlight_job)
-        self.service.signal("light_simulate", True)
 
     def post_job(self, driver):
         """Perform post-job cleanup.
@@ -524,13 +499,12 @@ class LiveLightJob:
         """
         # draw_geometry.debug_me()
         geometry = Geomstr(draw_geometry)
-        # print(f"Entered with {geometry.bbox()} ({geometry.index} segments [{source}])")
-        rotate = self._redlight_adjust_matrix()
-        geometry.transform(rotate)
-        # print(f"After redlight: {geometry.bbox()}")
+        # print (f"Entered with {geometry.bbox()} ({geometry.index} segments [{source}])")
         if adjust:
             geometry.transform(self.service.view.matrix)
-            # print(f"Adjusted to {geometry.bbox()}")
+            # print (f"Adjusted to {geometry.bbox()}")
+        rotate = self._redlight_adjust_matrix()
+        geometry.transform(rotate)
         self.points = list(
             geometry.as_equal_interpolated_points(
                 distance=self.quantization,  # expand_lines=True
@@ -555,6 +529,4 @@ class LiveLightJob:
         # if not elements:
         #     elements = list(self.service.elements.elems())
         #     self.source = "elements"
-        # Remove entries where the hidden flag is set
-        elements = [e for e in elements if not getattr(e, "hidden", False)]
         return elements

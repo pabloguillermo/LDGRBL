@@ -4,7 +4,6 @@ from wx import aui
 from meerk40t.core.elements.element_types import elem_nodes
 from meerk40t.core.units import UNITS_PER_PIXEL, Length
 from meerk40t.gui.icons import get_default_icon_size, icons8_compress
-from meerk40t.gui.position_mixin import PositionDimensionMixin
 from meerk40t.gui.wxutils import (
     StaticBoxSizer,
     TextCtrl,
@@ -37,15 +36,7 @@ def register_panel_position(window, context):
     context.register("pane/position", pane)
 
 
-class PositionPanel(PositionDimensionMixin, wx.Panel):
-    """PositionPanel - User interface panel for laser cutting operations
-    **Technical Purpose:**
-    Provides user interface controls for position functionality. Features checkbox controls for user interaction. Integrates with refresh_scene, modified_by_tool for enhanced functionality.
-    **End-User Perspective:**
-    This panel provides controls for position functionality. Key controls include "Individ." (checkbox), "Keep ratio" (checkbox)."""
-
-    """PositionPanel - User interface panel for laser cutting operations"""
-
+class PositionPanel(wx.Panel):
     def __init__(self, *args, context=None, small=False, **kwds):
         # begin wxGlade: PositionPanel.__init__
         kwds["style"] = kwds.get("style", 0) | wx.TAB_TRAVERSAL
@@ -55,8 +46,9 @@ class PositionPanel(PositionDimensionMixin, wx.Panel):
         self.SetHelpText("position")
         self.small = small
 
-        # Initialize position/dimension state from mixin
-        self._init_position_state()
+        self.offset_index = 0  # 0 to 8 tl tc tr cl cc cr bl bc br
+        self.offset_x = 0.0
+        self.offset_y = 0.0
         self.text_x = TextCtrl(
             self, wx.ID_ANY, "", check="float", style=wx.TE_PROCESS_ENTER
         )
@@ -112,7 +104,7 @@ class PositionPanel(PositionDimensionMixin, wx.Panel):
         s = bmp.Size
         icon_size = s[0]
         self.button_execute.SetBitmap(bmp)
-        self.pos_bitmaps = self.calculate_position_icons(icon_size)
+        self.pos_bitmaps = self.calculate_icons(icon_size)
         self.button_param.SetBitmap(self.pos_bitmaps[self.offset_index])
 
         self.text_x.SetActionRoutine(self.on_text_x_enter)
@@ -132,7 +124,14 @@ class PositionPanel(PositionDimensionMixin, wx.Panel):
 
         self.position_aspect_ratio = True
         self.chk_lock.SetValue(self.position_aspect_ratio)
-        # Note: position state already initialized by _init_position_state()
+        self.position_x = 0.0
+        self.position_y = 0.0
+        self.position_h = 0.0
+        self.position_w = 0.0
+        self.org_x = None
+        self.org_y = None
+        self.org_w = None
+        self.org_h = None
         self.context.setting(str, "units_name", "mm")
         self.position_units = self.context.units_name
 
@@ -140,7 +139,32 @@ class PositionPanel(PositionDimensionMixin, wx.Panel):
             self.position_units = "inch"
         self._update_position()
 
-
+    def calculate_icons(self, bmap_size):
+        result = []
+        for y in range(3):
+            for x in range(3):
+                imgBit = wx.Bitmap(bmap_size, bmap_size)
+                dc = wx.MemoryDC(imgBit)
+                dc.SelectObject(imgBit)
+                dc.SetBackground(wx.WHITE_BRUSH)
+                dc.Clear()
+                dc.SetPen(wx.BLACK_PEN)
+                delta = (bmap_size - 1) / 3
+                for xx in range(4):
+                    dc.DrawLine(int(delta * xx), 0, int(delta * xx), int(bmap_size - 1))
+                    dc.DrawLine(0, int(delta * xx), int(bmap_size - 1), int(delta * xx))
+                # And now fill the area
+                dc.SetBrush(wx.BLACK_BRUSH)
+                dc.DrawRectangle(
+                    int(x * delta),
+                    int(y * delta),
+                    int(delta + 1),
+                    int(delta + 1),
+                )
+                # Now release dc
+                dc.SelectObject(wx.NullBitmap)
+                result.append(imgBit)
+        return result
 
     def pane_show(self, *args):
         self.context.listen("units", self.space_changed)
@@ -298,18 +322,9 @@ class PositionPanel(PositionDimensionMixin, wx.Panel):
     def update_position(self, reset):
         if not self.IsShown():
             return
-        # Use mixin's reentry protection
-        self.protected_update(self._do_update_position, reset)
-
-    def _do_update_position(self, reset):
-        # Quick check whether we are already in a deletion phase
-        try:
-            dummy = hasattr(self.text_h, "GetValue")
-        except RuntimeError:
-            return
         more_than_one = False
         ct = 0
-        for _e in self.context.elements.elems(emphasized=True):
+        for _e in self.context.elements.flat(types=elem_nodes, emphasized=True):
             ct += 1
             if ct > 1:
                 more_than_one = True
@@ -368,8 +383,8 @@ class PositionPanel(PositionDimensionMixin, wx.Panel):
             self.org_w = self.position_w
             self.org_h = self.position_h
 
-        # Use mixin method to calculate reference-adjusted position
-        pos_x, pos_y = self.calculate_reference_position()
+        pos_x = self.position_x + self.offset_x * self.position_w
+        pos_y = self.position_y + self.offset_y * self.position_h
         self.text_x.SetValue(f"{pos_x:.2f}")
         self.text_y.SetValue(f"{pos_y:.2f}")
         self.text_w.SetValue(f"{self.position_w:.2f}")
@@ -381,8 +396,20 @@ class PositionPanel(PositionDimensionMixin, wx.Panel):
         self.update_position(True)
 
     def on_button_param(self, event):
-        # Use mixin method to handle reference point click
-        self.handle_reference_click(event)
+        pt_mouse = event.GetPosition()
+        ob = event.GetEventObject()
+        rect_ob = ob.GetRect()
+        col = int(3 * pt_mouse[0] / rect_ob[2])
+        row = int(3 * pt_mouse[1] / rect_ob[3])
+        idx = 3 * row + col
+        # print(idx, col, row, pt_mouse, rect_ob)
+        self.offset_index = idx
+        if self.offset_index > 8:
+            self.offset_index = 0
+        x_offsets = (0, 0.5, 1, 0, 0.5, 1, 0, 0.5, 1)
+        y_offsets = (0, 0, 0, 0.5, 0.5, 0.5, 1, 1, 1)
+        self.offset_x = x_offsets[self.offset_index]
+        self.offset_y = y_offsets[self.offset_index]
         self.button_param.SetBitmap(self.pos_bitmaps[self.offset_index])
         self.button_param.Refresh()
         self.update_position(True)
@@ -441,14 +468,9 @@ class PositionPanel(PositionDimensionMixin, wx.Panel):
         ):
             return
         if self.chk_individually.GetValue():
-            for elem in self.context.elements.elems(emphasized=True):
-                # Skip elements that cannot be scaled
-                if not elem.can_scale:
-                    continue
+            for elem in self.context.elements.flat(types=elem_nodes, emphasized=True):
                 _bb = elem.bounds
                 bb = [_bb[0], _bb[1], _bb[2], _bb[3]]
-                org_scale_x = bb[0] + (bb[2] - bb[0]) * self.offset_x
-                org_scale_y = bb[1] + (bb[3] - bb[1]) * self.offset_y
                 new_w = float(
                     Length(f"{round(self.position_w, 6)}{self.position_units}")
                 )
@@ -479,8 +501,9 @@ class PositionPanel(PositionDimensionMixin, wx.Panel):
                     bb[2] = bb[0] + (bb[2] - bb[0]) * scalex
                 if scaley != 0:
                     bb[3] = bb[1] + (bb[3] - bb[1]) * scaley
-                elem.matrix.post_scale(scalex, scaley, org_scale_x, org_scale_y)
-                elem.scaled(sx=scalex, sy=scaley, ox=org_scale_x, oy=org_scale_y)
+
+                elem.matrix.post_scale(scalex, scaley, bb[0], bb[1])
+                elem.scaled(sx=scalex, sy=scaley, ox=bb[0], oy=bb[1])
                 # elem._bounds = bb
         else:
             u = self.position_units
@@ -505,20 +528,11 @@ class PositionPanel(PositionDimensionMixin, wx.Panel):
                 else:
                     sy = 1
                 if sx != 1.0 or sy != 1.0:
-                    cmd2 = f"scale {sx} {sy}"
+                    cmd2 = f"scale {sx} {sy}\n"
             # cmd = f"resize {round(self.position_x, 6)}{u} {round(self.position_y, 0)}{u}"
             # cmd += f" {round(self.position_w, 6)}{u} {round(self.position_h, 6)}{u}\n"
-            if cmd1 == "" and cmd2 == "":
-                return
-            if cmd1:
-                self.context(f"{cmd1}\n")
-            if cmd2:
-                bb = self.context.elements.selected_area()
-                if bb is not None:
-                    cx = bb[0] + (bb[2] - bb[0]) * self.offset_x
-                    cy = bb[1] + (bb[3] - bb[1]) * self.offset_y
-                    cmd2 += f" -x {cx} -y {cy}"
-                    self.context(f"{cmd2}\n")
+            cmd = cmd1 + cmd2
+            self.context(cmd)
         if refresh_after:
             self.update_position(True)
 
@@ -530,10 +544,7 @@ class PositionPanel(PositionDimensionMixin, wx.Panel):
         ):
             return
         if self.chk_individually.GetValue():
-            for elem in self.context.elements.elems(emphasized=True):
-                # Skip elements that cannot be moved
-                if not elem.can_move(self.context.elements.lock_allows_move):
-                    continue
+            for elem in self.context.elements.flat(types=elem_nodes, emphasized=True):
                 _bb = elem.bounds
                 bb = [_bb[0], _bb[1], _bb[2], _bb[3]]
                 newx = float(
@@ -662,8 +673,8 @@ class PositionPanel(PositionDimensionMixin, wx.Panel):
         except ValueError:
             try:
                 pos_x = Length(
-                    self.text_x.GetValue(),
-                    relative_length=self.context.device.view.width,
+                    self.text_h.GetValue(),
+                    relative_length=self.context.device.view.height,
                     unitless=UNITS_PER_PIXEL,
                     preferred_units=self.context.units_name,
                 )
@@ -680,8 +691,8 @@ class PositionPanel(PositionDimensionMixin, wx.Panel):
         except ValueError:
             try:
                 pos_y = Length(
-                    self.text_y.GetValue(),
-                    relative_length=self.context.device.view.height,
+                    self.text_h.GetValue(),
+                    relative_length=self.context.device.view.width,
                     unitless=UNITS_PER_PIXEL,
                     preferred_units=self.context.units_name,
                 )

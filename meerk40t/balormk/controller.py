@@ -226,8 +226,6 @@ class GalvoController:
     single commands.
     """
 
-    DEBUG = True
-
     def __init__(
         self,
         service,
@@ -246,9 +244,7 @@ class GalvoController:
         self.usb_log = service.channel(
             f"{self.service.safe_label}/usb", buffer_size=500
         )
-        # Keep reference to prevent garbage collection with weak=True default
-        self._usb_status_handler = lambda e: service.signal("pipe;usb_status", e)
-        self.usb_log.watch(self._usb_status_handler)
+        self.usb_log.watch(lambda e: service.signal("pipe;usb_status", e))
 
         self.connection = None
         self._is_opening = False
@@ -287,7 +283,6 @@ class GalvoController:
 
         self.mode = DRIVER_STATE_RAPID
         self._list_lock = threading.RLock()
-        self._send_lock = threading.RLock()
         self._active_list = None
         self._active_index = 0
         self._list_executing = False
@@ -302,10 +297,6 @@ class GalvoController:
     @property
     def source(self):
         return self.service.source
-
-    @property
-    def list_executing(self):
-        return self._list_executing
 
     @property
     def state(self):
@@ -368,7 +359,7 @@ class GalvoController:
             )
         if self.connection is None:
             if self.service.setting(bool, "mock", False) or self.force_mock:
-                self.connection = MockConnection(self.usb_log, device=self.service)
+                self.connection = MockConnection(self.usb_log)
                 name = self.service.safe_label
                 self.connection.send = self.service.channel(f"{name}/send")
                 self.connection.recv = self.service.channel(f"{name}/recv")
@@ -428,17 +419,16 @@ class GalvoController:
             return ERR
         if not self.connection:
             return ERR
-        with self._send_lock:
+        try:
+            self.connection.write(self._machine_index, data)
+        except ConnectionError:
+            return ERR
+        if read:
             try:
-                self.connection.write(self._machine_index, data)
+                r = self.connection.read(self._machine_index)
+                return struct.unpack("<4H", r)
             except ConnectionError:
                 return ERR
-            if read:
-                try:
-                    r = self.connection.read(self._machine_index)
-                    return struct.unpack("<4H", r)
-                except (ConnectionError, struct.error):
-                    return ERR
 
     def status(self):
         b0, b1, b2, b3 = self.get_version()
@@ -598,19 +588,6 @@ class GalvoController:
             if self._active_list is None:
                 self._list_new()
             index = self._active_index
-            msg = struct.pack(
-                "<6H", int(command), int(v1), int(v2), int(v3), int(v4), int(v5)
-            )
-            if self.DEBUG:
-                cmdstr = list_command_lookup.get(command, "unknown")
-                remainder = f"{v1} {v2} {v3} {v4} {v5}"
-                while remainder.endswith(" 0"):
-                    remainder = remainder[:-2]
-                packet = struct.pack(
-                    "<6H", int(command), int(v1), int(v2), int(v3), int(v4), int(v5)
-                )
-                hexstr = " ".join(f"{x:02X}" for x in packet)
-                self.usb_log(f"> {hexstr} -- {cmdstr} {remainder}")
             self._active_list[index : index + 12] = struct.pack(
                 "<6H", int(command), int(v1), int(v2), int(v3), int(v4), int(v5)
             )
@@ -669,13 +646,12 @@ class GalvoController:
 
         power = (
             float(settings.get("power", self.service.default_power)) / 10.0
-        )  # Convert power, out of 1000 to a percentage
+        )  # Convert power, out of 1000
         frequency = float(settings.get("frequency", self.service.default_frequency))
         fpk = float(settings.get("fpk", self.service.default_fpk))
-        # print (f"Set settings: power={power}, frequency={frequency}, fpk={fpk}")
         if self.source == "fiber":
-            self.frequency(frequency)
             self.power(power)
+            self.frequency(frequency)
         elif self.source == "co2":
             self.frequency(frequency)
             self.fpk(fpk)
@@ -686,11 +662,7 @@ class GalvoController:
             self.power(power)
 
         self.list_mark_speed(float(settings.get("speed", self.service.default_speed)))
-        # print("Settings:")
-        # print(f"Timing enabled: {settings.get('timing_enabled', False)}")
-        # print(f"Delay on: {settings.get('delay_laser_on', None)}")
-        # print(f"Delay off: {settings.get('delay_laser_off', None)}")
-        # print(f"Polygon delay: {settings.get('delay_polygon', None)}")
+
         if str(settings.get("timing_enabled", False)).lower() == "true":
             self.list_laser_on_delay(
                 settings.get("delay_laser_on", self.service.delay_laser_on)
@@ -943,21 +915,14 @@ class GalvoController:
         """
         if self._power == power:
             return
-        power = max(0, min(100, power))  # make sure it is in 0-100 range
         self._power = power
         if self.source == "co2":
-            if self._frequency is None or self._frequency == 0:
-                self.frequency(self.service.default_frequency)
             power_ratio = int(round(200 * power / self._frequency))
             self.list_mark_power_ratio(power_ratio)
         elif self.source == "fiber":
             self.list_mark_current(self._convert_power(power))
         elif self.source == "uv":
-            uv_power = 100 - power if self.service.power_invert else power
-            if self._frequency is None or self._frequency == 0:
-                self.frequency(self.service.default_frequency)
-            power_ratio = int(round(200 * uv_power / self._frequency))
-            # print (f"Power ratio for UV: {power_ratio}   (from power {power} and frequency {self._frequency}) -> calculated {uv_power}")
+            power_ratio = int(round(200 * power / self._frequency))
             self.list_mark_power_ratio(power_ratio)
 
     def frequency(self, frequency):
@@ -1223,8 +1188,7 @@ class GalvoController:
         if self._delay_on == delay:
             return
         self._delay_on = delay
-        self.usb_log(f"Laser on delay was set to {delay}")
-        self._list_write(listLaserOnDelay, abs(delay), 0x0000 if delay >= 0 else 0x8000)
+        self._list_write(listLaserOnDelay, abs(delay), 0x0000 if delay > 0 else 0x8000)
 
     def list_laser_off_delay(self, delay):
         """
@@ -1235,10 +1199,7 @@ class GalvoController:
         if self._delay_off == delay:
             return
         self._delay_off = delay
-        self.usb_log(f"Laser off delay was set to {delay}")
-        self._list_write(
-            listLaserOffDelay, abs(delay), 0x0000 if delay >= 0 else 0x8000
-        )
+        self._list_write(listLaserOffDelay, abs(delay), 0x0000 if delay > 0 else 0x8000)
 
     def list_mark_frequency(self, frequency):
         """
@@ -1284,7 +1245,7 @@ class GalvoController:
         if self._delay_jump == delay:
             return
         self._delay_jump = delay
-        self._list_write(listJumpDelay, abs(delay), 0x0000 if delay >= 0 else 0x8000)
+        self._list_write(listJumpDelay, abs(delay), 0x0000 if delay > 0 else 0x8000)
 
     def list_polygon_delay(self, delay):
         """
@@ -1292,12 +1253,10 @@ class GalvoController:
         @param delay:
         @return:
         """
-        value = int(min(65535, max(0, delay / 10.0)))
-        if self._delay_poly == value:
+        if self._delay_poly == delay:
             return
-        self._delay_poly = value
-        self._list_write(listPolygonDelay, value)
-        self.usb_log(f"Polygon delay was set to {delay} -> {value}")
+        self._delay_poly = delay
+        self._list_write(listPolygonDelay, abs(delay), 0x0000 if delay > 0 else 0x8000)
 
     def list_write_port(self):
         """
@@ -1359,7 +1318,7 @@ class GalvoController:
         @param delay:
         @return:
         """
-        self._list_write(listFlyDelay, abs(delay), 0x0000 if delay >= 0 else 0x8000)
+        self._list_write(listFlyDelay, abs(delay), 0x0000 if delay > 0 else 0x8000)
 
     def list_set_co2_fpk(self, fpk1, fpk2=None):
         """
@@ -1496,23 +1455,6 @@ class GalvoController:
     def get_list_status(self):
         return self._command(GetListStatus)
 
-    def get_execution_status(self):
-        reply = self.get_list_status()
-        if reply is None:
-            return "disconnected"
-        status_info = reply[3] if len(reply) > 3 else 0
-        # Bit definitions (word 3):
-        #   0x0004 (bit 2) -> Running state indicator
-        #   0x0008 (bit 3) -> Paused state indicator
-        is_running_state = bool(status_info & 0x0004)
-        is_paused_state = bool(status_info & 0x0008)
-        if is_paused_state:
-            return "paused"
-        elif is_running_state:
-            return "running"
-        else:
-            return "idle"
-
     def get_position_xy(self):
         return self._command(GetPositionXY)
 
@@ -1547,7 +1489,7 @@ class GalvoController:
 
     def set_max_poly_delay(self, delay):
         return self._command(
-            SetMaxPolyDelay, abs(delay), 0x0000 if delay >= 0 else 0x8000
+            SetMaxPolyDelay, abs(delay), 0x0000 if delay > 0 else 0x8000
         )
 
     def set_end_of_list(self, end):

@@ -8,7 +8,7 @@ from meerk40t.balormk.driver import BalorDriver
 from meerk40t.core.spoolers import Spooler
 from meerk40t.core.units import Angle, Length
 from meerk40t.core.view import View
-from meerk40t.device.devicechoices import get_effect_choices, get_operation_choices
+from meerk40t.device.devicechoices import get_effect_choices
 from meerk40t.device.mixins import Status
 from meerk40t.kernel import Service, signal_listener
 
@@ -62,7 +62,6 @@ class BalorDevice(Service, Status):
         self.register("format/util console", "{enabled}{command}")
         # This device prefers to display power level in percent
         self.setting(bool, "use_percent_for_power_display", True)
-        self.setting(bool, "use_mm_min_for_speed_display", False)
         # Tuple contains 4 value pairs: Speed Low, Speed High, Power Low, Power High, each with enabled, value
         self.setting(
             list, "dangerlevel_op_cut", (False, 0, False, 0, False, 0, False, 0)
@@ -167,19 +166,6 @@ class BalorDevice(Service, Status):
                 "nonzero": True,
             },
             {
-                "attr": "power_invert",
-                "object": self,
-                "default": False,
-                "type": bool,
-                "label": _("Invert Power"),
-                "tip": _("UV lasers might require inverted power levels"),
-                # Hint for translation _("General")
-                "section": "_00_General",
-                "subsection": "_00_",
-                "priority": "20",
-                "conditional": (self, "source", "uv"),
-            },
-            {
                 "attr": "flip_x",
                 "object": self,
                 "default": False,
@@ -249,7 +235,7 @@ class BalorDevice(Service, Status):
                 # _("User Offset")
                 # Hint for translation _("User Offset")
                 "subsection": "_30_User Offset",
-                "ignore": True,  # Does not work yet, so don't show
+                "ignore": True, # Does not work yet, so don't show
             },
             {
                 "attr": "user_margin_y",
@@ -264,7 +250,7 @@ class BalorDevice(Service, Status):
                 "section": "_10_Parameters",
                 # Hint for translation _("User Offset")
                 "subsection": "_30_User Offset",
-                "ignore": True,  # Does not work yet, so don't show
+                "ignore": True, # Does not work yet, so don't show
             },
             {
                 "attr": "interp",
@@ -355,54 +341,6 @@ class BalorDevice(Service, Status):
                 "signals": "balorpin",
             },
             {
-                "attr": "pedal_mode",
-                "object": self,
-                "default": "ignore",
-                "type": str,
-                "style": "combo",
-                "choices": [
-                    "ignore",
-                    "pause_resume_toggle",
-                    "pause_while_pressed",
-                    "stop",
-                ],
-                "display": [
-                    _("Ignore (only act on input operation)"),
-                    _("Pause/Resume Job on Press"),
-                    _("Pause While Pressed"),
-                    _("Stop Job"),
-                ],
-                "label": _("Pedal action"),
-                "tip": _(
-                    "What action should be taken when the foot pedal is pressed during a job execution?"
-                ),
-                # Hint for translation _("Parameters")
-                "section": "_10_Parameters",
-                # Hint for translation _("Pin-Index")
-                "subsection": "_31_Footpedal",
-                "signals": "balorpin",
-            },
-            {
-                "attr": "pedal_active_low",
-                "object": self,
-                "default": True,
-                "type": bool,
-                "label": _("Active on low signal"),
-                "tip": _(
-                    "Should the pedal be considered pressed when the signal is low?"
-                ),
-                # Hint for translation _("Parameters")
-                "section": "_10_Parameters",
-                # Hint for translation _("Pin-Index")
-                "subsection": "_31_Footpedal",
-                "conditional": (
-                    self,
-                    "pedal_mode",
-                    ("pause_resume_toggle", "pause_while_pressed", "stop"),
-                ),
-                "signals": "balorpin",
-            },
-            {
                 "attr": "signal_updates",
                 "object": self,
                 "default": True,
@@ -431,22 +369,7 @@ class BalorDevice(Service, Status):
         ]
         self.register_choices("balor", choices)
 
-        def _use_percent_for_power():
-            return getattr(self, "use_percent_for_power_display", True)
-
-        def _use_minute_for_speed():
-            return getattr(self, "use_mm_min_for_speed_display", False)
-
         self.register_choices("balor-effects", get_effect_choices(self))
-        self.register_choices(
-            "balor-defaults",
-            get_operation_choices(
-                self,
-                default_cut_speed=150,
-                default_engrave_speed=250,
-                default_raster_speed=500,
-            ),
-        )
 
         choices = [
             {
@@ -456,28 +379,6 @@ class BalorDevice(Service, Status):
                 "type": int,
                 "label": _("Redlight travel speed"),
                 "tip": _("Speed of the galvo when using the red laser."),
-            },
-            {
-                "attr": "redlight_delay_dark",
-                "object": self,
-                "default": 1,
-                "type": int,
-                "trailer": "µs",
-                "label": _("Dark"),
-                "tip": _("Delay for dark movement."),
-                # Hint for translation _("Delays")
-                "subsection": "Delays",
-            },
-            {
-                "attr": "redlight_delay_light",
-                "object": self,
-                "default": 1,
-                "type": int,
-                "trailer": "µs",
-                "label": _("Light"),
-                "tip": _("Delay for light movement."),
-                # Hint for translation _("Delays")
-                "subsection": "Delays",
             },
             {
                 "attr": "redlight_offset_x",
@@ -522,18 +423,6 @@ class BalorDevice(Service, Status):
                 ),
                 "priority": "0",
             },
-            {
-                "attr": "restart_light_jobs",
-                "object": self,
-                "default": False,
-                "type": bool,
-                "label": _("Restart light jobs"),
-                "tip": _(
-                    "If enabled, light jobs will be restarted automatically after a job completes."
-                ),
-                "priority": "0",
-                "signals": "restart",
-            },
         ]
         self.register_choices("balor-redlight", choices)
 
@@ -541,33 +430,20 @@ class BalorDevice(Service, Status):
             {
                 "attr": "default_power",
                 "object": self,
-                "default": 500.0,
+                "default": 50.0,
                 "type": float,
-                "style": "power",
-                "percent": _use_percent_for_power,
-                "label": _("Power"),
-                # Translation hint: _("Cut/Engrave")
-                "subsection": "_10_Cut/Engrave",
-                "tip": _("What power level do we cut at?")
-                + "\n"
-                + _(
-                    "This is global setting that will be overruled by operation settings."
-                ),
+                "label": _("Laser Power"),
+                "trailer": "%",
+                "tip": _("What power level do we cut at?"),
             },
             {
                 "attr": "default_speed",
                 "object": self,
                 "default": 100.0,
                 "type": float,
-                "style": "speed",
-                "perminute": _use_minute_for_speed,
-                "label": _("Speed"),
-                "subsection": "_10_Cut/Engrave",
-                "tip": _("How fast do we cut?")
-                + "\n"
-                + _(
-                    "This is global setting that will be overruled by operation settings."
-                ),
+                "trailer": "mm/s",
+                "label": _("Cut Speed"),
+                "tip": _("How fast do we cut?"),
             },
             {
                 "attr": "default_frequency",
@@ -576,8 +452,6 @@ class BalorDevice(Service, Status):
                 "type": float,
                 "trailer": "kHz",
                 "label": _("Q Switch Frequency"),
-                # Hint for translation _("Miscellaneous")
-                "subsection": "_50_Miscellaneous",
                 "tip": _("QSwitch Frequency value"),
             },
             {
@@ -587,8 +461,7 @@ class BalorDevice(Service, Status):
                 "type": float,
                 "trailer": "%",
                 "label": _("First Pulse Killer"),
-                "subsection": "_50_Miscellaneous",
-                "conditional": (self, "source", ("co2", "uv")),
+                "conditional": (self, "source", "co2"),
                 "tip": _("Percent of First Pulse Killer for co2 source"),
             },
             {
@@ -596,11 +469,8 @@ class BalorDevice(Service, Status):
                 "object": self,
                 "default": 2000.0,
                 "type": float,
-                "label": _("Speed"),
-                "style": "speed",
-                "perminute": _use_minute_for_speed,
-                # Translation hint: _("Travel")
-                "subsection": "_30_Travel",
+                "label": _("Travel Speed"),
+                "trailer": "mm/s",
                 "tip": _("How fast do we travel when not cutting?"),
             },
             {
@@ -612,7 +482,7 @@ class BalorDevice(Service, Status):
                 "tip": _("Enable using Pulse Width (MOPA)"),
                 # "conditional": (self, "source", "fiber"),
                 # Hint for translation _("Pulse Width")
-                "subsection": "_40_Pulse Width",
+                "subsection": "Pulse Width",
             },
             {
                 "attr": "default_pulse_width",
@@ -643,7 +513,7 @@ class BalorDevice(Service, Status):
                 "trailer": "ns",
                 "tip": _("Set the MOPA pulse width setting"),
                 # Hint for translation _("Pulse Width")
-                "subsection": "_40_Pulse Width",
+                "subsection": "Pulse Width",
             },
         ]
         self.register_choices("balor-global", choices)
@@ -688,8 +558,6 @@ class BalorDevice(Service, Status):
                 "type": float,
                 "label": _("Polygon Delay"),
                 "trailer": "µs",
-                "lower": 0,
-                "upper": 655350,
                 "tip": _("Delay amount between different points in the path travel."),
                 # Hint for translation _("General")
                 "section": "_10_General",
@@ -1085,8 +953,6 @@ class BalorDevice(Service, Status):
         self.realize()
 
         self.spooler = Spooler(self)
-        if self.restart_light_jobs:
-            self.spooler.reinsert_stopped_priority_jobs = True
         self.driver = BalorDriver(self)
         self.spooler.driver = self.driver
 
@@ -1115,13 +981,7 @@ class BalorDevice(Service, Status):
         return True
 
     def service_attach(self, *args, **kwargs):
-        if hasattr(self.driver, "service_attach"):
-            self.driver.service_attach()
         self.realize()
-
-    def service_detach(self, *args, **kwargs):
-        if hasattr(self.driver, "service_detach"):
-            self.driver.service_detach()
 
     @signal_listener("lens_size")
     @signal_listener("rotate")
@@ -1136,9 +996,6 @@ class BalorDevice(Service, Status):
         try:
             unit_size = float(Length(self.lens_size))
         except ValueError:
-            return
-        if unit_size == 0:
-            print(f"Warning: lens_size cannot be zero, skipping realize")
             return
         galvo_range = 0xFFFF
         units_per_galvo = unit_size / galvo_range
@@ -1198,22 +1055,3 @@ class BalorDevice(Service, Status):
         If the device is in mock mode, returns 'mock', otherwise returns 'usb'.
         """
         return "mock" if self.mock else "usb"
-
-    def get_operation_defaults(self, op_type: str) -> dict:
-        """
-        Returns the default operation settings for the device.
-        """
-        settings = {
-            "timing_enabled": False,
-            "delay_polygon": self.delay_polygon,
-            "delay_laser_off": self.delay_laser_off,
-            "delay_laser_on": self.delay_laser_on,
-            "pulse_width_enabled": self.pulse_width_enabled,
-            "pulse_width": self.default_pulse_width,
-            "rapid_enabled": False,
-            "rapid_speed": self.default_rapid_speed,
-            "frequency": self.default_frequency,
-        }
-        ps_settings = self.get_operation_power_speed_defaults(op_type)
-        settings.update(ps_settings)
-        return settings

@@ -20,9 +20,9 @@ class EncodingDetectFile:
     ENCODING_UTF_16_LE = "utf_16_le"
 
     # http://unicode.org/faq/utf_bom.html#BOM
-    BOM_UTF_8 = b"\xef\xbb\xbf"
-    BOM_UTF_16_BE = b"\xfe\xff"
-    BOM_UTF_16_LE = b"\xff\xfe"
+    BOM_UTF_8 = "\xef\xbb\xbf"
+    BOM_UTF_16_BE = "\xfe\xff"
+    BOM_UTF_16_LE = "\xff\xfe"
 
     BYTE_EOL = (13, 10)  # \r\n
 
@@ -46,89 +46,64 @@ class EncodingDetectFile:
                 EncodingDetectFile.ENCODING_UTF_16_LE, EncodingDetectFile.BOM_UTF_16_LE
             )
 
-        # test 3 byte UTF-8 BOM (only if we have at least 3 bytes available)
-        if len(file_data) == 2:
-            file_data += fh.read(1)
-            if len(file_data) == 3 and file_data == EncodingDetectFile.BOM_UTF_8:
-                return result(
-                    EncodingDetectFile.ENCODING_UTF_8, EncodingDetectFile.BOM_UTF_8
-                )
+        # test 3 byte UTF-8 BOM
+        file_data += fh.read(1)
+        # print(f"first 3 bytes: {file_data}")
+        if file_data == EncodingDetectFile.BOM_UTF_8:
+            return result(
+                EncodingDetectFile.ENCODING_UTF_8, EncodingDetectFile.BOM_UTF_8
+            )
 
         # no BOM marker - return bytes read so far
         return False, False, file_data
 
     def _detect_ascii_utf8(self, file_data):
         ascii_chars_only = True
-        i = 0
 
-        while i < len(file_data):
-            file_byte = file_data[i]
+        byte_follow = 0
+        for file_byte in file_data:
+            # process additional character byte(s)
+            if byte_follow:
+                if 128 <= file_byte <= 191:
+                    byte_follow -= 1
+                    ascii_chars_only = False
+                    continue
+
+                # not ASCII or UTF-8
+                return False
 
             # determine byte length of character
             # https://en.wikipedia.org/wiki/UTF-8#Codepage_layout
             if 1 <= file_byte <= 127:
-                # single byte ASCII
-                i += 1
+                # single byte
                 continue
 
             if 194 <= file_byte <= 223:
-                # two bytes follow (2-byte sequence)
-                if i + 1 >= len(file_data):
-                    return False  # incomplete sequence
-                second_byte = file_data[i + 1]
-                if not (128 <= second_byte <= 191):
-                    return False  # invalid continuation byte
-
-                # check for overlong encoding (should have been 1 byte)
-                if file_byte == 194 and second_byte <= 191:
-                    return False  # overlong encoding
-
-                ascii_chars_only = False
-                i += 2
+                # one byte follows
+                byte_follow = 1
                 continue
 
             if 224 <= file_byte <= 239:
-                # three bytes follow (3-byte sequence)
-                if i + 2 >= len(file_data):
-                    return False  # incomplete sequence
-                second_byte = file_data[i + 1]
-                third_byte = file_data[i + 2]
-                if not (128 <= second_byte <= 191 and 128 <= third_byte <= 191):
-                    return False  # invalid continuation bytes
-
-                # check for overlong encoding (should have been 2 bytes or less)
-                if file_byte == 224 and second_byte <= 159:
-                    return False  # overlong encoding
-
-                ascii_chars_only = False
-                i += 3
+                # two bytes follow
+                byte_follow = 2
                 continue
 
             if 240 <= file_byte <= 244:
-                # four bytes follow (4-byte sequence)
-                if i + 3 >= len(file_data):
-                    return False  # incomplete sequence
-                second_byte = file_data[i + 1]
-                third_byte = file_data[i + 2]
-                fourth_byte = file_data[i + 3]
-                if not (128 <= second_byte <= 191 and 128 <= third_byte <= 191 and 128 <= fourth_byte <= 191):
-                    return False  # invalid continuation bytes
-
-                # check for overlong encoding (should have been 3 bytes or less)
-                if file_byte == 240 and second_byte <= 143:
-                    return False  # overlong encoding
-
-                ascii_chars_only = False
-                i += 4
+                # three bytes follow
+                byte_follow = 3
                 continue
 
-            # invalid UTF-8 leading byte (128-193, 245-255)
+            # not ASCII or UTF-8
+            return EncodingDetectFile.ENCODING_CP1252
+
+        # end of file data [byte_follow] must be zero to ensure last character was consumed
+        if byte_follow:
             return False
 
         # success - return ASCII or UTF-8 result
         return (
             EncodingDetectFile.ENCODING_ASCII
-            if ascii_chars_only
+            if (ascii_chars_only)
             else EncodingDetectFile.ENCODING_UTF_8
         )
 
@@ -191,44 +166,39 @@ class EncodingDetectFile:
     def load(self, file_path):
         # open file
         try:
-            with open(file_path, "rb") as fh:
-                # detect a byte order mark (BOM)
-                file_encoding, bom_marker, file_data = self._detect_bom(fh)
-                if file_encoding:
-                    # file has a BOM - decode everything past it
-                    try:
-                        remaining_data = fh.read()
-                        decoded = remaining_data.decode(file_encoding)
-                        return (file_encoding, bom_marker, decoded)
-                    except UnicodeDecodeError:
-                        return False
-
-                # no BOM - read remaining file data
-                file_data += fh.read()
-
-        except (OSError, IOError):
-            # File cannot be opened or read
+            fh = open(file_path, "rb")
+        except Exception:
             return False
 
+        # detect a byte order mark (BOM)
+        file_encoding, bom_marker, file_data = self._detect_bom(fh)
+        if file_encoding:
+            # file has a BOM - decode everything past it
+            try:
+                decode = fh.read().decode(file_encoding)
+            except UnicodeDecodeError:
+                return False
+            # print(f"decoded: {decode}")
+            fh.close()
+
+            return (file_encoding, bom_marker, decode)
+
+        # no BOM - read remaining file data
+        file_data += fh.read()
         #  print(f"All bytes: {file_data}")
+        fh.close()
 
         # test for ASCII/UTF-8
         file_encoding = self._detect_ascii_utf8(file_data)
         if file_encoding:
             # file is ASCII or UTF-8 (without BOM)
-            try:
-                return (file_encoding, None, file_data.decode(file_encoding))
-            except UnicodeDecodeError:
-                return False
+            return (file_encoding, None, file_data.decode(file_encoding))
 
         # test for UTF-16
         file_encoding = self._detect_utf16(file_data)
         if file_encoding:
             # file is UTF-16(-like) (without BOM)
-            try:
-                return (file_encoding, None, file_data.decode(file_encoding))
-            except UnicodeDecodeError:
-                return False
+            return (file_encoding, None, file_data.decode(file_encoding))
 
         # can't determine encoding
         return False

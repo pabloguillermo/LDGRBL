@@ -3,7 +3,7 @@ import wx
 from meerk40t.gui.scene.widget import Widget
 
 from ..scene.scene import Scene
-from ..scene.sceneconst import HITCHAIN_HIT, LAYER_LIVE
+from ..scene.sceneconst import HITCHAIN_HIT
 from .circlebrush import CircleBrush
 
 
@@ -12,8 +12,8 @@ class ToolWidget(Widget):
     AbstractClass for the ToolWidgets
     """
 
-    def __init__(self, scene: Scene, layer=LAYER_LIVE, **kwargs):
-        Widget.__init__(self, scene, all=True, layer=layer, **kwargs)
+    def __init__(self, scene: Scene):
+        Widget.__init__(self, scene, all=True)
         self.brush = CircleBrush()
         self.pen = wx.Pen()
         self.pen.SetColour(wx.BLUE)
@@ -27,7 +27,6 @@ class ToolWidget(Widget):
         return HITCHAIN_HIT
 
     def notify_created(self, node=None):
-        self.scene.invalidate_elements()
         self.scene.context.signal("element_added", node)
         select_it = getattr(self.scene.context, "auto_select", True)
         if select_it:

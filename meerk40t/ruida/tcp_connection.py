@@ -40,15 +40,6 @@ class TCPConnection:
             return
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            # Enable TCP keep-alive to prevent connection timeouts
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            # Set keep-alive parameters (platform-dependent)
-            try:
-                self.socket.setsockopt(socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPIDLE", 60), 60)
-                self.socket.setsockopt(socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPINTVL", 30), 30)
-                self.socket.setsockopt(socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPCNT", 3), 3)
-            except (AttributeError, OSError):
-                pass  # Not all platforms support these options
             # Make sure port is in a valid range...
             port = min(65535, max(0, self.service.port))
             self.socket.connect((self.service.address, port))
@@ -78,9 +69,6 @@ class TCPConnection:
         except OSError as e:
             self.close()
             self.service.signal("tcp;status", f"Host down {str(e)}")
-        except Exception as e:
-            self.close()
-            self.service.signal("tcp;status", f"unknown error on connect: {str(e)}")
 
     def close(self):
         if not self.connected:
@@ -99,9 +87,6 @@ class TCPConnection:
         return not self.is_shutdown and self.socket is not None
 
     def abort_connect(self):
-        pass
-
-    def set_swizzles(self, *args, **kwargs):
         pass
 
     def write(self, data):

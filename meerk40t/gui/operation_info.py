@@ -9,7 +9,6 @@ from meerk40t.gui.icons import (
     icons8_laserbeam_weak,
 )
 from meerk40t.gui.mwindow import MWindow
-from meerk40t.gui.gui_optypes import get_operation_info
 from meerk40t.gui.wxutils import ScrolledPanel, wxButton, wxListCtrl
 from meerk40t.kernel import signal_listener
 
@@ -17,14 +16,6 @@ _ = wx.GetTranslation
 
 
 class OpInfoPanel(ScrolledPanel):
-    """OpInfoPanel - User interface panel for laser cutting operations
-    **Technical Purpose:**
-    Provides user interface controls for opinfo functionality. Features button controls for user interaction. Integrates with tree_changed, rebuild_tree for enhanced functionality.
-    **End-User Perspective:**
-    This panel provides controls for opinfo functionality. Key controls include "Get Time Estimates" (button)."""
-
-    """OpInfoPanel - User interface panel for laser cutting operations"""
-
     def __init__(self, *args, context=None, **kwds):
         kwds["style"] = kwds.get("style", 0) | wx.TAB_TRAVERSAL
         wx.Panel.__init__(self, *args, **kwds)
@@ -36,8 +27,7 @@ class OpInfoPanel(ScrolledPanel):
             self,
             wx.ID_ANY,
             style=wx.LC_HRULES | wx.LC_REPORT | wx.LC_VRULES | wx.LC_SINGLE_SEL,
-            context=self.context,
-            list_name="list_operationinfo",
+            context=self.context, list_name="list_operationinfo",
         )
         self.list_operations.AppendColumn(_("#"), format=wx.LIST_FORMAT_LEFT, width=58)
 
@@ -73,9 +63,14 @@ class OpInfoPanel(ScrolledPanel):
         )
         self.SetSizer(sizer_main)
         self.Layout()
-    
-        self.opinfo = get_operation_info()
 
+        self.opinfo = {
+            "op cut": ("Cut", icons8_laser_beam, 0),
+            "op raster": ("Raster", icons8_direction, 0),
+            "op image": ("Image", icons8_image, 0),
+            "op engrave": ("Engrave", icons8_laserbeam_weak, 0),
+            "op dots": ("Dots", icon_points, 0),
+        }
         self.state_images = wx.ImageList()
         self.state_images.Create(width=25, height=25)
         for key in self.opinfo:
@@ -212,31 +207,28 @@ class OpInfoPanel(ScrolledPanel):
     def on_tree_popup_empty(self, opnode=None):
         def clear(event=None):
             with self.context.elements.undoscope("Clear"):
-                with self.context.elements.node_lock:
-                    opnode.remove_all_children()
+                opnode.remove_all_children()
 
         return clear
 
     def on_tree_popup_reclassify(self, opnode=None):
         def reclassify(event=None):
-            elements = self.context.elements
-            with elements.undoscope("Re-Classify"):
-                with elements.node_lock:
-                    opnode.remove_all_children()
-                    data = list(elements.elems())
-                    reverse = elements.classify_reverse
-                    fuzzy = elements.classify_fuzzy
-                    fuzzydistance = elements.classify_fuzzydistance
-                    if reverse:
-                        data = reversed(data)
-                    for node in data:
-                        # result is a tuple containing classified, should_break, feedback
-                        result = opnode.classify(
-                            node,
-                            fuzzy=fuzzy,
-                            fuzzydistance=fuzzydistance,
-                            usedefault=False,
-                        )
+            with self.context.elements.undoscope("Re-Classify"):
+                opnode.remove_all_children()
+                data = list(self.context.elements.elems())
+                reverse = self.context.elements.classify_reverse
+                fuzzy = self.context.elements.classify_fuzzy
+                fuzzydistance = self.context.elements.classify_fuzzydistance
+                if reverse:
+                    data = reversed(data)
+                for node in data:
+                    # result is a tuple containing classified, should_break, feedback
+                    result = opnode.classify(
+                        node,
+                        fuzzy=fuzzy,
+                        fuzzydistance=fuzzydistance,
+                        usedefault=False,
+                    )
             self.context.signal("tree_changed")
 
         return reclassify

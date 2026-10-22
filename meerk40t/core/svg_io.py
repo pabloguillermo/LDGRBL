@@ -609,33 +609,12 @@ class SVGWriter:
                 "settings",
             ):
                 continue
-            # We dont write the effect key out, that needs to come from direct children
-            if key == "effect" and node.type in ("op engrave", "op cut"):
-                continue
             if hasattr(node, "settings"):
-                # Did we end up with default attributes defined in node.py? Remove them...
-                disallowed = ("type", "id", "label", "lock")
-                for key in disallowed:
-                    if key in node.settings:
-                        del node.settings[key]
-
                 if key in node.settings:
                     settings_value = node.settings[key]
-                    if type(value) is bool and type(settings_value) is str:
-                        settings_value = settings_value.lower() == "true"
-                        node.settings[key] = settings_value
                     if settings_value != value:
-                        direction = "out"
-                        direction = (
-                            "in"
-                            if settings_value is None or settings_value == ""
-                            else "out"
-                        )
-                        # print (f"Needed to fix {key}: node-value: {value} ({type(value).__name__}), settings-value: {settings_value} ({type(settings_value).__name__}) -> {direction}")
-                        if direction == "in":
-                            node.settings[key] = value
-                        elif direction == "out":
-                            setattr(node, key, settings_value)
+                        # print (f"Needed to fix {key}: node-value: {value}, settings-value: {settings_value}")
+                        node.settings[key] = value
 
         saved_attributes = []
         if hasattr(node, "settings"):
@@ -743,10 +722,8 @@ class SVGProcessor:
         load_operations,
         load_hidden_to_regmarks=True,
         reuse_operations=True,
-        replace_ops=False,
     ):
         self.elements = elements
-        self.fastmode = getattr(self.elements, "fastload", False)
 
         self.operation_list = list()
         self.element_list = list()
@@ -759,7 +736,6 @@ class SVGProcessor:
         self.pathname = None
         self.load_operations = load_operations
         self.reuse_operations = reuse_operations
-        self.replace_ops = replace_ops
         self.mk_params = list(
             self.elements.kernel.lookup_all("registered_mk_svg_parameters")
         )
@@ -787,12 +763,15 @@ class SVGProcessor:
         @param pathname:
         @return:
         """
-        retain_op_list = list(self.elements.ops())
+        retain_op_list = [
+            child
+            for child in list(self.elements.ops())
+            if child._children is not None and len(child._children) > 0
+        ]
         self.pathname = pathname
 
         context_node = self.elements.elem_branch
-        with self.elements.node_lock:
-            file_node = context_node.add(type="file", filepath=pathname, fast=self.fastmode)
+        file_node = context_node.add(type="file", filepath=pathname)
         file_node.focus()
 
         self.parse(svg, file_node, self.element_list, branch="elements")
@@ -800,38 +779,27 @@ class SVGProcessor:
         if self.load_operations and self.operations_generated:
             # print ("Will replace all operations...")
             self.requires_classification = False
-            if self.replace_ops:
-                # Opening a project: clear pre-existing operations
-                # that weren't reused by the file.
-                with self.elements.node_lock:
-                    for child in list(self.elements.op_branch.children):
-                        if child in retain_op_list and not hasattr(child, "_ref_load"):
-                            child.remove_all_children(fast=True, destroy=True)
-                            child.remove_node(fast=True, destroy=True)
-            # Remove orphan operations from the file that got no references.
-            with self.elements.node_lock:
-                for child in list(self.elements.op_branch.children):
-                    if child in retain_op_list:
-                        continue
-                    if not hasattr(child, "_ref_load"):
-                        child.remove_all_children(fast=True, destroy=True)
-                        child.remove_node(fast=True, destroy=True)
+            for child in list(self.elements.op_branch.children):
+                if child in retain_op_list:
+                    continue
+                if not hasattr(child, "_ref_load"):
+                    child.remove_all_children(fast=True, destroy=True)
+                    child.remove_node(fast=True, destroy=True)
             # Hint for translate check: _("File loaded")
             self.elements.undo.mark("File loaded")
-            with self.elements.node_lock:
-                for op in self.elements.op_branch.flat():
-                    try:
-                        refs = op._ref_load
-                        del op._ref_load
-                    except AttributeError:
-                        continue
-                    if refs is None:
-                        continue
+            for op in self.elements.op_branch.flat():
+                try:
+                    refs = op._ref_load
+                    del op._ref_load
+                except AttributeError:
+                    continue
+                if refs is None:
+                    continue
 
-                    for ref in refs.split(" "):
-                        for e in self.element_list:
-                            if e.id == ref:
-                                op.add_reference(e, fast=self.fastmode)
+                for ref in refs.split(" "):
+                    for e in self.element_list:
+                        if e.id == ref:
+                            op.add_reference(e)
 
         if self.requires_classification and self.elements.classify_new:
             self.elements.classify(self.element_list)
@@ -1049,37 +1017,34 @@ class SVGProcessor:
             return
 
         decor = element.values.get("text-decoration", "").lower()
-        with self.elements.node_lock:
-            node = context_node.add(
-                id=ident,
-                text=element.text,
-                x=element.x,
-                y=element.y,
-                font=element.values.get("font"),
-                anchor=element.values.get(SVG_ATTR_TEXT_ANCHOR),
-                baseline=element.values.get(
-                    SVG_ATTR_TEXT_ALIGNMENT_BASELINE,
-                    element.values.get(SVG_ATTR_TEXT_DOMINANT_BASELINE, "baseline"),
-                ),
-                fast=self.fastmode,
-                matrix=element.transform,
-                fill=element.fill,
-                stroke=element.stroke,
-                stroke_width=element.stroke_width,
-                stroke_scale=bool(
-                    SVG_VALUE_NON_SCALING_STROKE
-                    not in element.values.get(SVG_ATTR_VECTOR_EFFECT, "")
-                ),
-                underline="underline" in decor,
-                strikethrough="line-through" in decor,
-                overline="overline" in decor,
-                texttransform=element.values.get("text-transform"),
-                type="elem text",
-                label=label,
-                settings=element.values,
-                hidden=set_hidden,
-            )
-
+        node = context_node.add(
+            id=ident,
+            text=element.text,
+            x=element.x,
+            y=element.y,
+            font=element.values.get("font"),
+            anchor=element.values.get(SVG_ATTR_TEXT_ANCHOR),
+            baseline=element.values.get(
+                SVG_ATTR_TEXT_ALIGNMENT_BASELINE,
+                element.values.get(SVG_ATTR_TEXT_DOMINANT_BASELINE, "baseline"),
+            ),
+            matrix=element.transform,
+            fill=element.fill,
+            stroke=element.stroke,
+            stroke_width=element.stroke_width,
+            stroke_scale=bool(
+                SVG_VALUE_NON_SCALING_STROKE
+                not in element.values.get(SVG_ATTR_VECTOR_EFFECT, "")
+            ),
+            underline="underline" in decor,
+            strikethrough="line-through" in decor,
+            overline="overline" in decor,
+            texttransform=element.values.get("text-transform"),
+            type="elem text",
+            label=label,
+            settings=element.values,
+            hidden=set_hidden,
+        )
         self.check_for_label_display(node, element)
         self.check_for_bound_information(node, element)
         e_list.append(node)
@@ -1101,7 +1066,7 @@ class SVGProcessor:
         @param e_list:
         @return:
         """
-        if len(element) == 0:
+        if len(element) < 0:
             return
 
         if element.values.get("type") == "elem polyline":
@@ -1116,21 +1081,19 @@ class SVGProcessor:
         if element.values.get("type") == "elem line":
             pass
         element.approximate_arcs_with_cubics()
-        with self.elements.node_lock:
-            node = context_node.add(
-                path=element,
-                type="elem path",
-                id=ident,
-                label=label,
-                lock=lock,
-                hidden=set_hidden,
-                fast=self.fastmode,
-            )
-            self.check_for_label_display(node, element)
-            self.check_for_line_attributes(node, element)
-            self.check_for_fill_attributes(node, element)
-            self.check_for_mk_path_attributes(node, element)
-            self.check_for_bound_information(node, element)
+        node = context_node.add(
+            path=element,
+            type="elem path",
+            id=ident,
+            label=label,
+            lock=lock,
+            hidden=set_hidden,
+        )
+        self.check_for_label_display(node, element)
+        self.check_for_line_attributes(node, element)
+        self.check_for_fill_attributes(node, element)
+        self.check_for_mk_path_attributes(node, element)
+        self.check_for_bound_information(node, element)
         e_list.append(node)
 
     def _parse_polyline(
@@ -1149,20 +1112,18 @@ class SVGProcessor:
         """
         if element.is_degenerate():
             return
-        with self.elements.node_lock:
-            node = context_node.add(
-                shape=element,
-                type="elem polyline",
-                id=ident,
-                label=label,
-                lock=lock,
-                hidden=set_hidden,
-                fast=self.fastmode,
-            )
-            self.check_for_label_display(node, element)
-            self.check_for_line_attributes(node, element)
-            self.check_for_fill_attributes(node, element)
-            self.check_for_mk_path_attributes(node, element, skip=("mkparam",))
+        node = context_node.add(
+            shape=element,
+            type="elem polyline",
+            id=ident,
+            label=label,
+            lock=lock,
+            hidden=set_hidden,
+        )
+        self.check_for_label_display(node, element)
+        self.check_for_line_attributes(node, element)
+        self.check_for_fill_attributes(node, element)
+        self.check_for_mk_path_attributes(node, element, skip=("mkparam",))
         if not self.check_for_bound_information(node, element) and self.precalc_bbox:
             # bounds will be done here, paintbounds won't...
             if element.transform.is_identity():
@@ -1202,20 +1163,18 @@ class SVGProcessor:
         """
         if element.is_degenerate():
             return
-        with self.elements.node_lock:
-            node = context_node.add(
-                shape=element,
-                type="elem ellipse",
-                id=ident,
-                label=label,
-                lock=lock,
-                hidden=set_hidden,
-                fast=self.fastmode,
-            )
-            self.check_for_label_display(node, element)
-            self.check_for_line_attributes(node, element)
-            self.check_for_mk_path_attributes(node, element, skip=("mkparam",))
-            self.check_for_bound_information(node, element)
+        node = context_node.add(
+            shape=element,
+            type="elem ellipse",
+            id=ident,
+            label=label,
+            lock=lock,
+            hidden=set_hidden,
+        )
+        self.check_for_label_display(node, element)
+        self.check_for_line_attributes(node, element)
+        self.check_for_mk_path_attributes(node, element, skip=("mkparam",))
+        self.check_for_bound_information(node, element)
         e_list.append(node)
 
     def _parse_rect(
@@ -1234,19 +1193,17 @@ class SVGProcessor:
         """
         if element.is_degenerate():
             return
-        with self.elements.node_lock:
-            node = context_node.add(
-                shape=element,
-                type="elem rect",
-                id=ident,
-                label=label,
-                lock=lock,
-                hidden=set_hidden,
-                fast=self.fastmode,
-            )
-            self.check_for_label_display(node, element)
-            self.check_for_line_attributes(node, element)
-            self.check_for_mk_path_attributes(node, element, skip=("mkparam",))
+        node = context_node.add(
+            shape=element,
+            type="elem rect",
+            id=ident,
+            label=label,
+            lock=lock,
+            hidden=set_hidden,
+        )
+        self.check_for_label_display(node, element)
+        self.check_for_line_attributes(node, element)
+        self.check_for_mk_path_attributes(node, element, skip=("mkparam",))
         if not self.check_for_bound_information(node, element) and self.precalc_bbox:
             # bounds will be done here, paintbounds won't...
             points = (
@@ -1288,19 +1245,17 @@ class SVGProcessor:
         """
         if element.is_degenerate():
             return
-        with self.elements.node_lock:
-            node = context_node.add(
-                shape=element,
-                type="elem line",
-                id=ident,
-                label=label,
-                lock=lock,
-                hidden=set_hidden,
-                fast=self.fastmode,
-            )
-            self.check_for_label_display(node, element)
-            self.check_for_line_attributes(node, element)
-            self.check_for_mk_path_attributes(node, element, skip=("mkparam",))
+        node = context_node.add(
+            shape=element,
+            type="elem line",
+            id=ident,
+            label=label,
+            lock=lock,
+            hidden=set_hidden,
+        )
+        self.check_for_label_display(node, element)
+        self.check_for_line_attributes(node, element)
+        self.check_for_mk_path_attributes(node, element, skip=("mkparam",))
         if not self.check_for_bound_information(node, element) and self.precalc_bbox:
             # bounds will be done here, paintbounds won't...
             points = (
@@ -1428,33 +1383,31 @@ class SVGProcessor:
                         _depth_resolution = 256
                 except (ValueError, TypeError):
                     pass
-                with self.elements.node_lock:
-                    node = context_node.add(
-                        image=element.image,
-                        matrix=element.transform,
-                        type="elem image",
-                        id=ident,
-                        overscan=_overscan,
-                        direction=_direction,
-                        dpi=_dpi,
-                        invert=_invert,
-                        dither=_dither,
-                        dither_type=_dither_type,
-                        red=_red,
-                        green=_green,
-                        blue=_blue,
-                        lightness=_lightness,
-                        label=label,
-                        operations=operations,
-                        lock=lock,
-                        is_depthmap=_is_depthmap,
-                        depth_resolution=_depth_resolution,
-                        keyhole_reference=_keyhole,
-                        hidden=set_hidden,
-                        fast=self.fastmode,
-                    )
-                    self.check_for_label_display(node, element)
-                    self.check_for_bound_information(node, element)
+                node = context_node.add(
+                    image=element.image,
+                    matrix=element.transform,
+                    type="elem image",
+                    id=ident,
+                    overscan=_overscan,
+                    direction=_direction,
+                    dpi=_dpi,
+                    invert=_invert,
+                    dither=_dither,
+                    dither_type=_dither_type,
+                    red=_red,
+                    green=_green,
+                    blue=_blue,
+                    lightness=_lightness,
+                    label=label,
+                    operations=operations,
+                    lock=lock,
+                    is_depthmap=_is_depthmap,
+                    depth_resolution=_depth_resolution,
+                    keyhole_reference=_keyhole,
+                    hidden=set_hidden,
+                )
+                self.check_for_label_display(node, element)
+                self.check_for_bound_information(node, element)
                 e_list.append(node)
         except OSError:
             pass
@@ -1475,9 +1428,8 @@ class SVGProcessor:
         """
 
         # Fix: we have mixed capitalisaton in full_ns and tag --> adjust
-        tag = element.values.get(SVG_ATTR_TAG, None)
+        tag = element.values.get(SVG_ATTR_TAG).lower()
         if tag is not None:
-            tag = tag.lower()
             # We remove the name space.
             full_ns = f"{{{MEERK40T_NAMESPACE.lower()}}}"
             if full_ns in tag:
@@ -1544,14 +1496,13 @@ class SVGProcessor:
             self.operations_generated = True
 
             try:
-                with self.elements.node_lock:
-                    if node_type == "op hatch":
-                        # Special fallback operation, op hatch is an op engrave with an effect hatch within it.
-                        node_type = "op engrave"
-                        op = self.elements.op_branch.add(type=node_type, fast=self.fastmode, **attrs)
-                        effect = op.add(type="effect hatch", fast=self.fastmode, **attrs)
-                    else:
-                        op = self.elements.op_branch.add(type=node_type, fast=self.fastmode, **attrs)
+                if node_type == "op hatch":
+                    # Special fallback operation, op hatch is an op engrave with an effect hatch within it.
+                    node_type = "op engrave"
+                    op = self.elements.op_branch.add(type=node_type, **attrs)
+                    effect = op.add(type="effect hatch", **attrs)
+                else:
+                    op = self.elements.op_branch.add(type=node_type, **attrs)
                 op._ref_load = element.values.get("references")
 
                 if op is None or not hasattr(op, "type") or op.type is None:
@@ -1574,8 +1525,7 @@ class SVGProcessor:
                 del attrs[
                     "settings"
                 ]  # If settings was set, delete it, or it will mess things up
-            with self.elements.node_lock:
-                elem = context_node.add(type=node_type, fast=self.fastmode, **attrs)
+            elem = context_node.add(type=node_type, **attrs)
             # This could be an elem point
             self.check_for_label_display(elem, element)
             self.check_for_bound_information(elem, element)
@@ -1631,20 +1581,18 @@ class SVGProcessor:
 
         is_dot, dot_point = SVGProcessor.is_dot(element)
         if is_dot:
-            with self.elements.node_lock:
-                node = context_node.add(
-                    point=dot_point,
-                    type="elem point",
-                    matrix=Matrix(),
-                    fill=element.fill,
-                    stroke=element.stroke,
-                    label=_label,
-                    lock=_lock,
-                    hidden=set_hidden,
-                    fast=self.fastmode,
-                )
-                self.check_for_label_display(node, element)
-                self.check_for_bound_information(node, element)
+            node = context_node.add(
+                point=dot_point,
+                type="elem point",
+                matrix=Matrix(),
+                fill=element.fill,
+                stroke=element.stroke,
+                label=_label,
+                lock=_lock,
+                hidden=set_hidden,
+            )
+            self.check_for_label_display(node, element)
+            self.check_for_bound_information(node, element)
             e_list.append(node)
         elif isinstance(element, SVGText):
             self._parse_text(
@@ -1766,104 +1714,27 @@ class SVGProcessor:
                                 break
                         if differs:
                             continue
-                        # Compare effect children to avoid reusing an
-                        # operation whose effects don't match the SVG.
-                        existing_effects = [
-                            node
-                            for node in testop.children
-                            if node.type.startswith("effect ")
-                        ]
-                        svg_effect_attrs = []
-                        for child in element:
-                            if not isinstance(child, Group):
-                                continue
-                            ca = dict(child.values.get("attributes", {}))
-                            if ca.get("type", "").startswith("effect "):
-                                svg_effect_attrs.append(ca)
-                        # Different number of effects — not a match.
-                        if len(existing_effects) != len(svg_effect_attrs):
-                            differs = True
-                        # Compare each effect's parameters.
-                        if not differs:
-                            for eff_node, svg_attrs in zip(
-                                existing_effects, svg_effect_attrs
-                            ):
-                                if eff_node.type != svg_attrs.get("type", ""):
-                                    differs = True
-                                    break
-                                for attr_key, attr_val in svg_attrs.items():
-                                    if attr_key in (
-                                        "type", "id", "label",
-                                        "lock", "hidden", "references",
-                                    ):
-                                        continue
-                                    node_val = getattr(
-                                        eff_node, attr_key, None
-                                    )
-                                    if node_val is None:
-                                        node_val = eff_node.settings.get(
-                                            attr_key
-                                        ) if hasattr(eff_node, "settings") else None
-                                    if node_val is not None and str(node_val) != str(attr_val):
-                                        differs = True
-                                        break
-                                if differs:
-                                    break
-                        if differs:
-                            continue
                         context_node = testop
                         already = True
                         break
 
             if not already:
-                with self.elements.node_lock:
-                    context_node = context_node.add(
-                        type=e_type, id=ident, label=_label, fast=self.fastmode, **e_dict
-                    )
-                    self.check_for_label_display(context_node, element)
-                    self.check_for_bound_information(context_node, element)
+                context_node = context_node.add(
+                    type=e_type, id=ident, label=_label, **e_dict
+                )
+                self.check_for_label_display(context_node, element)
+                self.check_for_bound_information(context_node, element)
             context_node._ref_load = element.values.get("references")
             e_list.append(context_node)
             if hasattr(context_node, "validate"):
                 context_node.validate()
 
-            # Recurse to children, but skip effect nodes if we are
-            # reusing an operation that already has matching effects.
-            # Collect the skipped effects' references and assign them
-            # to the operation — add_reference will route them to the
-            # existing effect child automatically.
-            skip_effects = already and any(
-                c.type.startswith("effect ")
-                for c in context_node._children
-            )
-            if skip_effects:
-                effect_refs = []
-                for child in element:
-                    if isinstance(child, Group):
-                        ca = child.values.get("attributes", {})
-                        if ca.get("type", "").startswith("effect "):
-                            refs = ca.get("references")
-                            if refs:
-                                effect_refs.append(refs)
-                if effect_refs:
-                    all_refs = " ".join(effect_refs)
-                    if context_node._ref_load:
-                        context_node._ref_load += " " + all_refs
-                    else:
-                        context_node._ref_load = all_refs
+            # recurse to children
             if self.reverse:
                 for child in reversed(element):
-                    if skip_effects and isinstance(child, Group):
-                        ca = child.values.get("attributes", {})
-                        if ca.get("type", "").startswith("effect "):
-                            continue
                     self.parse(child, context_node, e_list, branch=branch)
             else:
                 for child in element:
-                    if skip_effects and isinstance(child, Group):
-                        ca = child.values.get("attributes", {})
-                        if ca.get("type", "").startswith("effect "):
-                            continue
                     self.parse(child, context_node, e_list, branch=branch)
         elif isinstance(element, Use):
             # recurse to children, but do not subgroup elements.
@@ -1889,27 +1760,24 @@ class SVGProcessor:
         if len(self.regmark_list) > 0:
             # We need to add another filenode under regmarks and move all elements to it
             context_node = self.elements.reg_branch
-            with self.elements.node_lock:
-                file_node = context_node.add(type="file", fast=self.fastmode, filepath=self.pathname)
-                for node in self.regmark_list:
-                    if node._parent is context_node:
-                        if node.type == "group" and (
-                            node.id == "regmarks" or node.label == "regmarks"
-                        ):
-                            file_node.append_children(list(node.children), fast=True)
-                            node.remove_node()  # Removing group/file node.
-                        else:
-                            file_node.append_child(node)
+            file_node = context_node.add(type="file", filepath=self.pathname)
+            for node in self.regmark_list:
+                if node._parent is context_node:
+                    if node.type == "group" and (
+                        node.id == "regmarks" or node.label == "regmarks"
+                    ):
+                        for n in list(node.children):
+                            file_node.append_child(n)
+                        node.remove_node()  # Removing group/file node.
+                    else:
+                        file_node.append_child(node)
 
-        with self.elements.node_lock:
-            regmark = self.elements.reg_branch
-            for c in regmark.children:
-                if c.type == "group" and (c.id == "regmarks" or c.label == "regmarks"):
-                    c.insert_siblings(list(c.children), fast=True)
-                    c.remove_node()  # Removing group/file node.
-            # Signal tree rebuild after bulk operations - in fastmode we do a full rebuild at the end.
-            if not self.fastmode:
-                self.elements.signal("rebuild_tree", "regmarks")
+        regmark = self.elements.reg_branch
+        for c in regmark.children:
+            if c.type == "group" and (c.id == "regmarks" or c.label == "regmarks"):
+                for n in list(c.children):
+                    c.insert_sibling(n)
+                c.remove_node()  # Removing group/file node.
 
         needs_update = False
         for c in self.elements.flat():
@@ -1928,9 +1796,6 @@ class SVGProcessor:
 
         if needs_update:
             self.elements.process_keyhole_updates(None)
-        if self.fastmode:
-            # Rebuild tree once at end: elements, regmarks and operations
-            self.elements.signal("rebuild_tree")
 
 
 class SVGLoader:
@@ -1975,14 +1840,12 @@ class SVGLoader:
             raise BadFileError(str(e)) from e
         reuse = elements_service.reuse_operations_on_load
         to_regmarks = elements_service.load_hidden_to_regmarks
-        replace_ops = kwargs.get("replace_ops", False)
         elements_service._loading_cleared = True
         svg_processor = SVGProcessor(
             elements_service,
             load_operations=True,
             reuse_operations=reuse,
             load_hidden_to_regmarks=to_regmarks,
-            replace_ops=replace_ops,
         )
         svg_processor.process(svg, pathname)
         svg_processor.cleanup()

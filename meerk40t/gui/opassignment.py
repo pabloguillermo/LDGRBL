@@ -247,7 +247,7 @@ class OperationAssignPanel(wx.Panel):
     def set_buttons(self, skip_layout=False):
         self._clear_old()
         idx = 0
-        for node in list(self.context.elements.ops()):
+        for node in list(self.context.elements.flat(types=op_nodes)):
             if node.type.startswith("op "):
                 self.op_nodes[idx] = node
                 self._set_button(node)

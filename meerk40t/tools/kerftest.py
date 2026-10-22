@@ -27,11 +27,9 @@ _ = wx.GetTranslation
 
 
 class KerfPanel(wx.Panel):
-    """KerfPanel - User interface panel for laser cutting operations
-    **Technical Purpose:**
-    Provides user interface controls for kerf functionality. Features button, label controls for user interaction. Integrates with service/device/active, speed_min for enhanced functionality.
-    **End-User Perspective:**
-    This panel provides controls for kerf functionality. Key controls include "Create Pattern" (button), "Count:" (label), "Minimum:" (label)."""
+    """
+    UI for KerfTest, allows setting of parameters
+    """
 
     def __init__(self, *args, context=None, **kwds):
         # begin wxGlade: clsLasertools.__init__
@@ -848,11 +846,9 @@ class KerfPanel(wx.Panel):
         elif result == wx.ID_CANCEL:
             return
         if slider:
-            with self.context.elements.node_lock:
-                create_slider()
+            create_slider()
         else:
-            with self.context.elements.node_lock:
-                create_operations()
+            create_operations()
 
         self.context.signal("rebuild_tree")
         self.context.signal("refresh_scene", "Scene")

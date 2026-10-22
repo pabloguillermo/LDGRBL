@@ -5,7 +5,6 @@ import time
 import wx
 
 from meerk40t.core.elements.element_types import elem_nodes
-from meerk40t.core.units import Length
 from meerk40t.gui.laserrender import (
     DRAW_MODE_ANIMATE,
     DRAW_MODE_FLIPXY,
@@ -18,10 +17,6 @@ from meerk40t.gui.scene.sceneconst import (
     HITCHAIN_HIT,
     HITCHAIN_HIT_AND_DELEGATE,
     HITCHAIN_PRIORITY_HIT,
-    LAYER_ACTIVE_ELEMENTS,
-    LAYER_GENERIC_NODES,
-    LAYER_NONACTIVE_ELEMENTS,
-    LAYER_TOOLS,
     ORIENTATION_RELATIVE,
     RESPONSE_ABORT,
     RESPONSE_CHAIN,
@@ -30,12 +25,8 @@ from meerk40t.gui.scene.sceneconst import (
 )
 from meerk40t.gui.scene.scenespacewidget import SceneSpaceWidget
 from meerk40t.gui.wxutils import get_matrix_scale
-from meerk40t.gui.zmatrix import ZMatrix
-import numpy as np
-from meerk40t.core.spatial import _cKDTree
-from meerk40t.kernel import Job, Module, signal_listener
+from meerk40t.kernel import Job, Module
 from meerk40t.svgelements import Matrix, Point
-from meerk40t.core.geomstr import NON_GEOMETRY_TYPES, TYPE_END
 
 _reused_identity_widget = Matrix()
 XCELLS = 15
@@ -123,8 +114,9 @@ class SceneToast:
     def draw(self, gc: wx.GraphicsContext):
         if not self.message:
             return
-        alpha = int(self.countdown * 12.5) if self.countdown <= 20 else 255
-
+        alpha = 255
+        if self.countdown <= 20:
+            alpha = int(self.countdown * 12.5)
         self.set_alpha(alpha)
 
         width = self.right - self.left
@@ -187,259 +179,6 @@ class SceneToast:
         self.countdown = duration
 
 
-class LayerCache:
-    """Four-level opaque bitmap cache for scene rendering.
-
-    Cache A (background_bitmap): background colour fill + LAYER_BACKGROUND
-    (bed, grid).
-
-    Cache B (generic_bitmap): Cache A content + LAYER_GENERIC_NODES
-    (registration marks, machine origin, placements). Stays valid when only
-    elements change.
-
-    Cache C (elements_bitmap): Cache B content + LAYER_NONACTIVE_ELEMENTS
-    (non-emphasized elements). Stays valid when only emphasized elements
-    change.
-
-    Cache D (composite_bitmap): Cache C content + LAYER_ACTIVE_ELEMENTS
-    (emphasized elements). Only this layer needs rebuilding when the user
-    moves / edits a selected element without changing the selection set.
-
-    Widgets at LAYER_TOOLS and above are always drawn live on top.
-
-    Invalidation cascade:
-      background invalid  →  generic invalid  →  elements invalid  →  composite invalid
-      generic invalid     →  elements invalid  →  composite invalid
-      elements invalid    →  composite invalid
-    """
-
-    def __init__(self):
-        self._bg_bitmap = None
-        self._generic_bitmap = None
-        self._elements_bitmap = None
-        self._composite_bitmap = None
-        self._bg_valid = False
-        self._generic_valid = False
-        self._elements_valid = False
-        self._composite_valid = False
-        self._size = (0, 0)
-
-        # Statistics tracking
-        self._stats = {
-            'background': {'hits': 0, 'misses': 0, 'total_time': 0.0, 'count': 0},
-            'generic': {'hits': 0, 'misses': 0, 'total_time': 0.0, 'count': 0},
-            'elements': {'hits': 0, 'misses': 0, 'total_time': 0.0, 'count': 0},
-            'composite': {'hits': 0, 'misses': 0, 'total_time': 0.0, 'count': 0},
-        }
-        self._total_frames = 0
-        self._total_frame_time = 0.0
-
-    # ------------------------------------------------------------------
-    # validity queries
-    # ------------------------------------------------------------------
-    @property
-    def background_valid(self):
-        return self._bg_valid
-
-    @property
-    def generic_valid(self):
-        return self._generic_valid
-
-    @property
-    def elements_valid(self):
-        return self._elements_valid
-
-    @property
-    def composite_valid(self):
-        return self._composite_valid
-
-    @property
-    def size(self):
-        return self._size
-
-    # ------------------------------------------------------------------
-    # invalidation
-    # ------------------------------------------------------------------
-    def invalidate_background(self):
-        """Mark background cache dirty; cascades to generic, elements and composite."""
-        self._bg_valid = False
-        self._generic_valid = False
-        self._elements_valid = False
-        self._composite_valid = False
-
-    def invalidate_generic(self):
-        """Mark generic nodes cache dirty; cascades to elements and composite."""
-        self._generic_valid = False
-        self._elements_valid = False
-        self._composite_valid = False
-
-    def invalidate_elements(self):
-        """Mark elements cache dirty; cascades to composite."""
-        self._elements_valid = False
-        self._composite_valid = False
-
-    def invalidate_composite(self):
-        """Mark composite (emphasized) cache dirty only."""
-        self._composite_valid = False
-
-    # ------------------------------------------------------------------
-    # size management
-    # ------------------------------------------------------------------
-    def ensure_size(self, width, height):
-        """Allocate (or reallocate) cache bitmaps when the window size changes.
-        A size change invalidates all four caches."""
-        # wx.Bitmap(0, 0) is invalid on Windows; startup ClientSize can be 0×0 while
-        # _size is already (0, 0) — do not skip allocation and leave bitmaps None.
-        if width <= 0:
-            width = 1
-        if height <= 0:
-            height = 1
-        if (
-            self._size == (width, height)
-            and self._bg_bitmap is not None
-            and self._bg_bitmap.IsOk()
-        ):
-            return
-        self._size = (width, height)
-        self._bg_bitmap = wx.Bitmap(width, height)
-        self._generic_bitmap = wx.Bitmap(width, height)
-        self._elements_bitmap = wx.Bitmap(width, height)
-        self._composite_bitmap = wx.Bitmap(width, height)
-        self._bg_valid = False
-        self._generic_valid = False
-        self._elements_valid = False
-        self._composite_valid = False
-
-    # ------------------------------------------------------------------
-    # mark valid after a successful render
-    # ------------------------------------------------------------------
-    def mark_background_valid(self):
-        self._bg_valid = True
-
-    def mark_generic_valid(self):
-        self._generic_valid = True
-
-    def mark_elements_valid(self):
-        self._elements_valid = True
-
-    def mark_composite_valid(self):
-        self._composite_valid = True
-
-    # ------------------------------------------------------------------
-    # statistics tracking
-    # ------------------------------------------------------------------
-    def record_hit(self, layer):
-        """Record a cache hit for the specified layer."""
-        if layer in self._stats:
-            self._stats[layer]['hits'] += 1
-
-    def record_miss(self, layer, render_time=0.0):
-        """Record a cache miss (rebuild) for the specified layer."""
-        if layer in self._stats:
-            self._stats[layer]['misses'] += 1
-            self._stats[layer]['total_time'] += render_time
-            self._stats[layer]['count'] += 1
-
-    def record_frame(self, frame_time):
-        """Record a complete frame render."""
-        self._total_frames += 1
-        self._total_frame_time += frame_time
-
-    def get_statistics(self):
-        """Return a dictionary of cache statistics for all layers."""
-        stats = {}
-        for layer, data in self._stats.items():
-            total_checks = data['hits'] + data['misses']
-            hit_rate = (data['hits'] / total_checks * 100) if total_checks > 0 else 0.0
-            avg_time = (data['total_time'] / data['count']) if data['count'] > 0 else 0.0
-            stats[layer] = {
-                'hits': data['hits'],
-                'misses': data['misses'],
-                'total_checks': total_checks,
-                'hit_rate': hit_rate,
-                'avg_render_time': avg_time,
-                'total_render_time': data['total_time'],
-            }
-
-        # Add total frame statistics
-        avg_frame_time = (self._total_frame_time / self._total_frames) if self._total_frames > 0 else 0.0
-        stats['frames'] = {
-            'total_frames': self._total_frames,
-            'total_time': self._total_frame_time,
-            'avg_time': avg_frame_time,
-        }
-        return stats
-
-    def reset_statistics(self):
-        """Reset all cache statistics."""
-        for layer in self._stats:
-            self._stats[layer] = {'hits': 0, 'misses': 0, 'total_time': 0.0, 'count': 0}
-        self._total_frames = 0
-        self._total_frame_time = 0.0
-
-    def print_statistics(self, channel=None):
-        """Print formatted cache statistics as a table."""
-        stats = self.get_statistics()
-
-        # Build table header
-        output = ["\n=== Layer Cache Statistics ===\n"]
-
-        # Column headers
-        header = f"{'Layer':<12} {'Hits':>8} {'Misses':>8} {'Total':>8} {'Hit %':>8} {'Avg(ms)':>10} {'Total(s)':>10}"
-        separator = "─" * len(header)
-        output.append(header)
-        output.append(separator)
-
-        # Data rows for each layer
-        for layer in ['background', 'generic', 'elements', 'composite']:
-            s = stats[layer]
-            row = (f"{layer.capitalize():<12} "
-                   f"{s['hits']:>8} "
-                   f"{s['misses']:>8} "
-                   f"{s['total_checks']:>8} "
-                   f"{s['hit_rate']:>7.1f}% "
-                   f"{s['avg_render_time']*1000:>9.2f} "
-                   f"{s['total_render_time']:>10.3f}")
-            output.append(row)
-
-        output.append(separator)
-
-        # Total frame statistics
-        fs = stats['frames']
-        output.append(f"\nTotal Frames: {fs['total_frames']}")
-        output.append(f"Avg Frame Time: {fs['avg_time']*1000:.2f}ms")
-        output.append(f"Total Frame Time: {fs['total_time']:.3f}s")
-        if fs['total_frames'] > 0:
-            fps = 1.0 / fs['avg_time'] if fs['avg_time'] > 0 else 0.0
-            output.append(f"Average FPS: {fps:.1f}")
-
-        output.append("\n" + "="*len(header))
-
-        result = "\n".join(output)
-        if channel is not None:
-            channel(result)
-        return result
-
-    # ------------------------------------------------------------------
-    # bitmap accessors
-    # ------------------------------------------------------------------
-    @property
-    def background_bitmap(self):
-        return self._bg_bitmap
-
-    @property
-    def generic_bitmap(self):
-        return self._generic_bitmap
-
-    @property
-    def elements_bitmap(self):
-        return self._elements_bitmap
-
-    @property
-    def composite_bitmap(self):
-        return self._composite_bitmap
-
-
 class Scene(Module, Job):
     """
     The Scene Module holds all the needed references to widgets and catches the events from the ScenePanel which
@@ -454,7 +193,7 @@ class Scene(Module, Job):
     to the scene and then the interface widget which contains all the non-scene widget elements.
     """
 
-    def __init__(self, context, path, gui, pane=None, supports_snap=False, **kwargs):
+    def __init__(self, context, path, gui, pane=None, **kwargs):
         Module.__init__(self, context, path)
         Job.__init__(
             self,
@@ -464,7 +203,6 @@ class Scene(Module, Job):
             run_main=True,
         )
         self.stack = []
-        self.needs_snap = supports_snap
 
         # Scene lock is used for widget structure modification and scene drawing.
         self.scene_lock = threading.RLock()
@@ -473,21 +211,16 @@ class Scene(Module, Job):
         self.log_events = context.channel("scene-events")
         self.gui = gui
         self.pane = pane
-        self.hittable_elements = []
-        self.hit_chain = []
+        self.hittable_elements = list()
+        self.hit_chain = list()
         self.widget_root = None
         self.push_stack(SceneSpaceWidget(self))
 
         self.interval = 1.0 / 60.0  # 60fps
-        self.last_window_pos = None  # Store last 2-tuple window position
+        self.last_position = None
         self._down_start_time = None
         self._down_start_pos = None
         self._cursor = None
-        
-        # Configurable leftclick conversion thresholds
-        self.leftclick_time_threshold = 0.3
-        self.leftclick_distance_threshold = 50
-        
         self.suppress_changes = True
 
         self.colors = self.context.colors
@@ -501,9 +234,9 @@ class Scene(Module, Job):
         # If set this color will be used for the scene background (used during burn)
         self.overrule_background = None
 
-        self._animating = []
+        self._animating = list()
         self._animate_lock = threading.Lock()
-        self._adding_widgets = []
+        self._adding_widgets = list()
         self._animate_job = Job(
             self._animate_scene,
             job_name=f"Animate-Scene{path}",
@@ -514,10 +247,6 @@ class Scene(Module, Job):
         # Snap information
         self.snap_display_points = None
         self.snap_attraction_points = None
-        # Three-level render cache and invalidation guards
-        self._cache = LayerCache()
-        self._cached_matrix = None
-        self._cached_draw_mode = None
 
     @property
     def has_background(self):
@@ -637,26 +366,6 @@ class Scene(Module, Job):
         else:
             self.request_refresh()
 
-    def invalidate_background(self):
-        """Invalidate background cache; cascades to generic, elements and composite."""
-        self._cache.invalidate_background()
-        self.request_refresh()
-
-    def invalidate_generic(self):
-        """Invalidate generic nodes cache; cascades to elements and composite."""
-        self._cache.invalidate_generic()
-        self.request_refresh()
-
-    def invalidate_elements(self):
-        """Invalidate non-emphasized elements cache; cascades to composite."""
-        self._cache.invalidate_elements()
-        self.request_refresh()
-
-    def invalidate_emphasized(self):
-        """Invalidate emphasized (active) elements cache only."""
-        self._cache.invalidate_composite()
-        self.request_refresh()
-
     def animate(self, widget):
         with self._animate_lock:
             if widget not in self._adding_widgets:
@@ -711,218 +420,44 @@ class Scene(Module, Job):
             except RuntimeError:
                 # May hit runtime error.
                 pass
+            self.screen_refresh_is_requested = False
             self.scene_lock.release()
-        self.screen_refresh_is_requested = False
-
-    def _draw_scene_layers(self, gc, min_layer, max_layer):
-        """Draw scene_widget children in the layer range [min_layer, max_layer)."""
-        if self.widget_root is None:
-            return
-        scene_widget = self.widget_root.scene_widget
-        gc.PushState()
-        try:
-            matrix = scene_widget.matrix
-            if matrix is not None and not matrix.is_identity():
-                gc.ConcatTransform(wx.GraphicsContext.CreateMatrix(gc, ZMatrix(matrix)))
-        except Exception as e:
-            self.log(f"Could not concat scene matrix [{e}]")
-            gc.PopState()
-            return
-        # Iterate in reverse (same as Widget.draw), filtering by layer
-        for i in range(len(scene_widget) - 1, -1, -1):
-            widget = scene_widget[i]
-            if widget is not None and widget.visible and min_layer <= widget.layer < max_layer:
-                try:
-                    widget.draw(gc)
-                except Exception as e:
-                    self.log(f"Could not draw widget {type(widget).__name__} [{e}]")
-        gc.PopState()
+        else:
+            self.screen_refresh_is_requested = False
 
     def _update_buffer_ui_thread(self):
-        """Performs redrawing using four-level cache (background, generic, elements, composite)."""
-        frame_start_time = time.perf_counter()
+        """Performs redrawing of the data in the UI thread."""
         dm = self.context.draw_mode
         buf = self.gui.scene_buffer
         if buf is None or buf.GetSize() != self.gui.ClientSize or not buf.IsOk():
             self.gui.set_buffer()
             buf = self.gui.scene_buffer
-
-        w, h = self.gui.ClientSize
-        if w <= 0 or h <= 0:
-            return
-
-        # Reset clip rect (no partial invalidation with multi-level cache)
-        self.clip.SetX(0)
-        self.clip.SetY(0)
-        self.clip.SetWidth(0)
-        self.clip.SetHeight(0)
-
-        # Handle suppress_changes early (startup phase)
-        if self.suppress_changes or self.widget_root is None:
-            dc = wx.MemoryDC()
-            dc.SelectObject(buf)
-            if self.overrule_background is None:
-                self.background_brush.SetColour(self.colors.color_background)
-            else:
-                self.background_brush.SetColour(self.overrule_background)
-            dc.SetBackground(self.background_brush)
-            dc.Clear()
-            dc.SelectObject(wx.NullBitmap)
-            frame_time = time.perf_counter() - frame_start_time
-            self._cache.record_frame(frame_time)
-            return
-
-        # Invalidate all caches if window size, matrix, or draw_mode changed
-        self._cache.ensure_size(w, h)
-        scene_matrix = self.widget_root.scene_widget.matrix
-        if scene_matrix is None:
-            scene_matrix = Matrix()
-        current_matrix = (scene_matrix.a, scene_matrix.b, scene_matrix.c,
-                          scene_matrix.d, scene_matrix.e, scene_matrix.f)
-        if current_matrix != self._cached_matrix or dm != self._cached_draw_mode:
-            self._cache.invalidate_background()
-            self._cached_matrix = current_matrix
-            self._cached_draw_mode = dm
-
-        font = wx.Font(14, wx.FONTFAMILY_SWISS, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
-
-        # --- Cache A: background (bg color + LAYER_BACKGROUND) ---
-        if not self._cache.background_valid:
-            if (
-                self._cache.background_bitmap is None
-                or not self._cache.background_bitmap.IsOk()
-            ):
-                return
-            start_time = time.perf_counter()
-            dc = wx.MemoryDC()
-            dc.SelectObject(self._cache.background_bitmap)
-            if self.overrule_background is None:
-                self.background_brush.SetColour(self.colors.color_background)
-            else:
-                self.background_brush.SetColour(self.overrule_background)
-            dc.SetBackground(self.background_brush)
-            dc.Clear()
-            if dm & DRAW_MODE_FLIPXY != 0:
-                dc.SetUserScale(-1, -1)
-                dc.SetLogicalOrigin(w, h)
-            gc = wx.GraphicsContext.Create(dc)
-            gc.Size = dc.Size
-            gc.SetFont(font, wx.BLACK)
-            self._draw_scene_layers(gc, 0, LAYER_GENERIC_NODES)
-            gc.Destroy()
-            from meerk40t.camera.camera import composite_bed_photo_on_device_dc
-
-            composite_bed_photo_on_device_dc(self, dc)
-            dc.SelectObject(wx.NullBitmap)
-            self._cache.mark_background_valid()
-            render_time = time.perf_counter() - start_time
-            self._cache.record_miss('background', render_time)
-        else:
-            self._cache.record_hit('background')
-
-        # --- Cache B: generic nodes (background + GENERIC_NODES) ---
-        if not self._cache.generic_valid:
-            start_time = time.perf_counter()
-            dc = wx.MemoryDC()
-            dc.SelectObject(self._cache.generic_bitmap)
-            # Raw pixel copy from background
-            src_dc = wx.MemoryDC()
-            src_dc.SelectObject(self._cache.background_bitmap)
-            dc.Blit(0, 0, w, h, src_dc, 0, 0)
-            src_dc.SelectObject(wx.NullBitmap)
-            # Draw generic nodes
-            if dm & DRAW_MODE_FLIPXY != 0:
-                dc.SetUserScale(-1, -1)
-                dc.SetLogicalOrigin(w, h)
-            gc = wx.GraphicsContext.Create(dc)
-            gc.Size = dc.Size
-            gc.SetFont(font, wx.BLACK)
-            self._draw_scene_layers(gc, LAYER_GENERIC_NODES, LAYER_NONACTIVE_ELEMENTS)
-            gc.Destroy()
-            dc.SelectObject(wx.NullBitmap)
-            self._cache.mark_generic_valid()
-            render_time = time.perf_counter() - start_time
-            self._cache.record_miss('generic', render_time)
-        else:
-            self._cache.record_hit('generic')
-
-        # --- Cache C: non-emphasized elements (generic + NONACTIVE) ---
-        if not self._cache.elements_valid:
-            start_time = time.perf_counter()
-            dc = wx.MemoryDC()
-            dc.SelectObject(self._cache.elements_bitmap)
-            # Raw pixel copy from generic
-            src_dc = wx.MemoryDC()
-            src_dc.SelectObject(self._cache.generic_bitmap)
-            dc.Blit(0, 0, w, h, src_dc, 0, 0)
-            src_dc.SelectObject(wx.NullBitmap)
-            # Draw non-emphasized elements
-            if dm & DRAW_MODE_FLIPXY != 0:
-                dc.SetUserScale(-1, -1)
-                dc.SetLogicalOrigin(w, h)
-            gc = wx.GraphicsContext.Create(dc)
-            gc.Size = dc.Size
-            gc.SetFont(font, wx.BLACK)
-            self._draw_scene_layers(gc, LAYER_NONACTIVE_ELEMENTS, LAYER_ACTIVE_ELEMENTS)
-            gc.Destroy()
-            dc.SelectObject(wx.NullBitmap)
-            self._cache.mark_elements_valid()
-            render_time = time.perf_counter() - start_time
-            self._cache.record_miss('elements', render_time)
-        else:
-            self._cache.record_hit('elements')
-
-        # --- Cache D: emphasized elements (elements + ACTIVE) ---
-        if not self._cache.composite_valid:
-            start_time = time.perf_counter()
-            dc = wx.MemoryDC()
-            dc.SelectObject(self._cache.composite_bitmap)
-            # Raw pixel copy from elements
-            src_dc = wx.MemoryDC()
-            src_dc.SelectObject(self._cache.elements_bitmap)
-            dc.Blit(0, 0, w, h, src_dc, 0, 0)
-            src_dc.SelectObject(wx.NullBitmap)
-            # Draw emphasized elements
-            if dm & DRAW_MODE_FLIPXY != 0:
-                dc.SetUserScale(-1, -1)
-                dc.SetLogicalOrigin(w, h)
-            gc = wx.GraphicsContext.Create(dc)
-            gc.Size = dc.Size
-            gc.SetFont(font, wx.BLACK)
-            self._draw_scene_layers(gc, LAYER_ACTIVE_ELEMENTS, LAYER_TOOLS)
-            gc.Destroy()
-            dc.SelectObject(wx.NullBitmap)
-            self._cache.mark_composite_valid()
-            render_time = time.perf_counter() - start_time
-            self._cache.record_miss('composite', render_time)
-        else:
-            self._cache.record_hit('composite')
-
-        # --- Final frame: composite + live layers (tools, interface, toast) ---
         dc = wx.MemoryDC()
+        if self.clip.width != 0 and self.clip.height != 0:
+            dc.SetClippingRegion(self.clip)
+            self.clip.SetX(0)
+            self.clip.SetY(0)
+            self.clip.SetWidth(0)
+            self.clip.SetHeight(0)
+
         dc.SelectObject(buf)
-        # Pixel-copy the composite cache to the output buffer
-        src_dc = wx.MemoryDC()
-        src_dc.SelectObject(self._cache.composite_bitmap)
-        dc.Blit(0, 0, w, h, src_dc, 0, 0)
-        src_dc.SelectObject(wx.NullBitmap)
-        # Apply FLIPXY for live layers
+        if self.overrule_background is None:
+            self.background_brush.SetColour(self.colors.color_background)
+        else:
+            self.background_brush.SetColour(self.overrule_background)
+        dc.SetBackground(self.background_brush)
+        dc.Clear()
+        w, h = dc.Size
         if dm & DRAW_MODE_FLIPXY != 0:
             dc.SetUserScale(-1, -1)
             dc.SetLogicalOrigin(w, h)
         gc = wx.GraphicsContext.Create(dc)
         gc.dc = dc
         gc.Size = dc.Size
+
+        font = wx.Font(14, wx.FONTFAMILY_SWISS, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
         gc.SetFont(font, wx.BLACK)
-        # Live scene layers (tools and above)
-        self._draw_scene_layers(gc, LAYER_TOOLS, float('inf'))
-        # Interface widgets (guides, reticle)
-        if self.widget_root is not None:
-            self.widget_root.interface_widget.draw(gc)
-        # Toast (animated, always live)
-        if self._toast is not None:
-            self._toast.draw(gc)
-        # Invert if needed
+        self.draw(gc)
         if dm & DRAW_MODE_INVERT != 0:
             dc.Blit(0, 0, w, h, dc, 0, 0, wx.SRC_INVERT)
         gc.Destroy()
@@ -930,17 +465,16 @@ class Scene(Module, Job):
         del gc.dc
         del dc
 
-        # Record total frame time
-        frame_time = time.perf_counter() - frame_start_time
-        self._cache.record_frame(frame_time)
-
     def toast(self, message, token=-1):
         if self._toast is None:
             self._toast = SceneToast(
                 self, self.x(0.1), self.y(0.8), self.x(0.9), self.y(0.9)
             )
-        self._toast.set_message(message, token)
-        self.animate(self._toast)
+            self._toast.set_message(message, token)
+            self.animate(self._toast)
+        else:
+            self._toast.set_message(message, token)
+            self.animate(self._toast)
 
     def x(self, v):
         width, height = self.gui.ClientSize
@@ -1001,10 +535,6 @@ class Scene(Module, Job):
         """
         Called when a widget is moved from one widget parent to another.
         """
-        pass
-    
-    def notify_tree_changed(self):
-        # Called when the widget tree has changed (e.g. a widget was added/removed)
         pass
 
     def draw(self, canvas):
@@ -1099,98 +629,6 @@ class Scene(Module, Job):
             if current_widget.contains(hit_point.x, hit_point.y):
                 self.hit_chain.append((current_widget, current_matrix))
 
-    def _handle_position_setup(self, window_pos):
-        """Handle position setup and return normalized window position with deltas."""
-        if self.last_window_pos is None:
-            self.last_window_pos = window_pos
-        dx = window_pos[0] - self.last_window_pos[0]
-        dy = window_pos[1] - self.last_window_pos[1]
-        extended_pos = (
-            window_pos[0],
-            window_pos[1],
-            self.last_window_pos[0],
-            self.last_window_pos[1],
-            dx,
-            dy,
-        )
-        self.last_window_pos = window_pos  # Update to current position as 2-tuple
-        return extended_pos
-
-    def _handle_capture_lost(self, event_type):
-        """Handle capture lost events by notifying all widgets in hit chain."""
-        for i, hit in enumerate(self.hit_chain):
-            if hit is None:
-                continue  # Element was dropped.
-            current_widget, current_matrix = hit
-            current_widget.event(
-                window_pos=None,
-                scene_pos=None,
-                event_type=event_type,
-                nearest_snap=None,
-                modifiers=None,
-            )
-        return False
-
-    def _calculate_space_position(self, window_pos, current_matrix):
-        """Calculate space position from window position using matrix transformation."""
-        space_pos = window_pos
-        if current_matrix is not None and not current_matrix.is_identity():
-            space_cur = current_matrix.point_in_inverse_space(window_pos[:2])
-            space_last = current_matrix.point_in_inverse_space(window_pos[2:4])
-            sdx = space_cur[0] - space_last[0]
-            sdy = space_cur[1] - space_last[1]
-            space_pos = (
-                space_cur[0],
-                space_cur[1],
-                space_last[0],
-                space_last[1],
-                sdx,
-                sdy,
-            )
-        return space_pos
-
-    def _handle_keyboard_events(
-        self, window_pos, event_type, nearest_snap, modifiers, keycode
-    ):
-        """Handle keyboard events by distributing them to all hittable elements."""
-        self.rebuild_hittable_chain()
-        for current_widget, current_matrix in self.hittable_elements:
-            space_pos = self._calculate_space_position(window_pos, current_matrix)
-            response = current_widget.event(
-                window_pos=window_pos,
-                space_pos=space_pos,
-                event_type=event_type,
-                nearest_snap=nearest_snap,
-                modifiers=modifiers,
-                keycode=keycode,
-            )
-
-            if response == RESPONSE_ABORT:
-                self.hit_chain.clear()
-                return True
-            elif response == RESPONSE_CONSUME:
-                return True
-            elif response == RESPONSE_CHAIN:
-                continue
-            elif response == RESPONSE_DROP:
-                continue
-
-        return False
-
-    def _find_previous_top_element(self):
-        """Find the previous top element in the hit chain."""
-        previous_top_element = None
-        try:
-            idx = 0
-            while idx < len(self.hit_chain):
-                if not self.hit_chain[idx][0].transparent:
-                    previous_top_element = self.hit_chain[idx][0]
-                    break
-                idx += 1
-        except (IndexError, TypeError):
-            pass
-        return previous_top_element
-
     def event(
         self, window_pos, event_type="", nearest_snap=None, modifiers=None, keycode=None
     ):
@@ -1216,145 +654,94 @@ class Scene(Module, Job):
             )
 
         if window_pos is None:
-            return self._handle_capture_lost(event_type)
-
-        window_pos = self._handle_position_setup(window_pos)
-        previous_top_element = self._find_previous_top_element()
-
-        # Handle keyboard events
-        if event_type in ("key_down", "key_up"):
-            return self._handle_keyboard_events(
-                window_pos, event_type, nearest_snap, modifiers, keycode
-            )
-
-        # Handle mouse events
-        return self._handle_mouse_events(
-            window_pos,
-            event_type,
-            nearest_snap,
-            modifiers,
-            keycode,
-            previous_top_element,
+            # Capture Lost
+            for i, hit in enumerate(self.hit_chain):
+                if hit is None:
+                    continue  # Element was dropped.
+                current_widget, current_matrix = hit
+                current_widget.event(
+                    window_pos=None,
+                    scene_pos=None,
+                    event_type=event_type,
+                    nearest_snap=None,
+                    modifiers=None,
+                )
+            return False
+        if self.last_position is None:
+            self.last_position = window_pos
+        dx = window_pos[0] - self.last_position[0]
+        dy = window_pos[1] - self.last_position[1]
+        window_pos = (
+            window_pos[0],
+            window_pos[1],
+            self.last_position[0],
+            self.last_position[1],
+            dx,
+            dy,
         )
+        self.last_position = window_pos
+        previous_top_element = None
+        try:
+            idx = 0
+            while idx < len(self.hit_chain):
+                if not self.hit_chain[idx][0].transparent:
+                    previous_top_element = self.hit_chain[idx][0]
+                    break
+                idx += 1
 
-    def _handle_hover_state_changes(
-        self,
-        window_pos,
-        event_type,
-        previous_top_element,
-        current_widget,
-        space_pos,
-        modifiers,
-        keycode,
-        i,
-    ):
-        """Handle hover state changes between widgets."""
-        if i != 0 or event_type != "hover" or previous_top_element is current_widget:
-            return previous_top_element
-        if previous_top_element is not None:
-            if self.log_events:
-                self.log_events(f"Converted hover_end: {str(window_pos)}")
-            previous_top_element.event(
-                window_pos=window_pos,
-                space_pos=space_pos,
-                event_type="hover_end",
-                nearest_snap=None,
-                modifiers=modifiers,
-                keycode=keycode,
-            )
-        current_widget.event(
-            window_pos=window_pos,
-            space_pos=space_pos,
-            event_type="hover_start",
-            nearest_snap=None,
-            modifiers=modifiers,
-            keycode=keycode,
-        )
-        if self.log_events:
-            self.log_events(f"Converted hover_start: {str(window_pos)}")
-        return current_widget
+        except (IndexError, TypeError):
+            pass
 
-    def _handle_leftclick_conversion(
-        self,
-        window_pos,
-        event_type,
-        space_pos,
-        nearest_snap,
-        modifiers,
-        keycode,
-        current_widget,
-    ):
-        """Handle conversion of leftup to leftclick if within time and distance thresholds."""
-        if (
-            event_type == "leftup"
-            and time.time() - self._down_start_time <= self.leftclick_time_threshold
-            and abs(complex(*window_pos[:2]) - complex(*self._down_start_pos[:2])) < self.leftclick_distance_threshold
+        if event_type in (
+            "key_down",
+            "key_up",
         ):
-            response = current_widget.event(
-                window_pos=window_pos,
-                space_pos=space_pos,
-                event_type="leftclick",
-                nearest_snap=nearest_snap,
-                modifiers=modifiers,
-                keycode=keycode,
-            )
-            if self.log_events:
-                self.log_events(f"Converted leftclick: {str(window_pos)}")
-            return response
-        elif event_type == "leftup":
-            if self.log_events:
-                self.log_events(
-                    f"Did not convert to click, {time.time() - self._down_start_time}"
+            # print("Keyboard-Event raised: %s" % event_type)
+            self.rebuild_hittable_chain()
+            for current_widget, current_matrix in self.hittable_elements:
+                space_pos = window_pos
+                if current_matrix is not None and not current_matrix.is_identity():
+                    space_cur = current_matrix.point_in_inverse_space(window_pos[0:2])
+                    space_last = current_matrix.point_in_inverse_space(window_pos[2:4])
+                    sdx = space_cur[0] - space_last[0]
+                    sdy = space_cur[1] - space_last[1]
+                    space_pos = (
+                        space_cur[0],
+                        space_cur[1],
+                        space_last[0],
+                        space_last[1],
+                        sdx,
+                        sdy,
+                    )
+                response = current_widget.event(
+                    window_pos=window_pos,
+                    space_pos=space_pos,
+                    event_type=event_type,
+                    nearest_snap=nearest_snap,
+                    modifiers=modifiers,
+                    keycode=keycode,
                 )
 
-        return current_widget.event(
-            window_pos=window_pos,
-            space_pos=space_pos,
-            event_type=event_type,
-            nearest_snap=nearest_snap,
-            modifiers=modifiers,
-            keycode=keycode,
-        )
+                if response == RESPONSE_ABORT:
+                    self.hit_chain.clear()
+                    # print (f"Response abort of {event_type}, {keycode}/{modifiers} by {current_widget}")
+                    return True
+                elif response == RESPONSE_CONSUME:
+                    # if event_type in ("leftdown", "middledown", "middleup", "leftup", "move", "leftclick"):
+                    #      widgetname = type(current_widget).__name__
+                    #      print("Event %s was consumed by %s" % (event_type, widgetname))
+                    # print (f"Response consume of {event_type}, {keycode}/{modifiers} by {current_widget}")
+                    return True
+                elif response == RESPONSE_CHAIN:
+                    continue
+                elif response == RESPONSE_DROP:
+                    # self.hit_chain[i] = None
+                    continue
+                #
+                # if response == RESPONSE_ABORT:
+                #     self.hit_chain.clear()
+            return False
 
-    def _process_snap_response(self, response, space_pos, window_pos, current_matrix):
-        """Process snap response if it contains snap coordinates."""
-        if type(response) is tuple:
-            params = response[1:]
-            response = response[0]
-            if len(params) > 1:
-                new_x_space = params[0]
-                new_y_space = params[1]
-
-                sdx = new_x_space - space_pos[0]
-                if current_matrix is not None and not current_matrix.is_identity():
-                    sdx *= get_matrix_scale(current_matrix)
-                snap_x = window_pos[0] + sdx
-                sdy = new_y_space - space_pos[1]
-                if current_matrix is not None and not current_matrix.is_identity():
-                    sdy *= current_matrix.value_scale_y()
-                snap_y = window_pos[1] + sdy
-
-                if snap_x is not None:
-                    snap_space = current_matrix.point_in_inverse_space((snap_x, snap_y))
-                    nearest_snap = (
-                        snap_space[0],
-                        snap_space[1],
-                        snap_x,
-                        snap_y,
-                    )
-                    self.pane.last_snap = nearest_snap
-        return response
-
-    def _handle_mouse_events(
-        self,
-        window_pos,
-        event_type,
-        nearest_snap,
-        modifiers,
-        keycode,
-        previous_top_element,
-    ):
-        """Handle mouse events by processing the hit chain."""
         if event_type in (
             "leftdown",
             "middledown",
@@ -1367,45 +754,143 @@ class Scene(Module, Job):
             self._down_start_pos = window_pos
             self.rebuild_hittable_chain()
             self.find_hit_chain(window_pos)
-
         for i, hit in enumerate(self.hit_chain):
             if hit is None:
                 continue  # Element was dropped.
             current_widget, current_matrix = hit
             if current_widget is None:
                 continue
+            space_pos = window_pos
+            if current_matrix is not None and not current_matrix.is_identity():
+                space_cur = current_matrix.point_in_inverse_space(window_pos[0:2])
+                space_last = current_matrix.point_in_inverse_space(window_pos[2:4])
+                sdx = space_cur[0] - space_last[0]
+                sdy = space_cur[1] - space_last[1]
+                space_pos = (
+                    space_cur[0],
+                    space_cur[1],
+                    space_last[0],
+                    space_last[1],
+                    sdx,
+                    sdy,
+                )
 
-            space_pos = self._calculate_space_position(window_pos, current_matrix)
+            if (
+                i == 0
+                and event_type == "hover"
+                and previous_top_element is not current_widget
+            ):
+                if previous_top_element is not None:
+                    if self.log_events:
+                        self.log_events(f"Converted hover_end: {str(window_pos)}")
+                    previous_top_element.event(
+                        window_pos=window_pos,
+                        space_pos=space_pos,
+                        event_type="hover_end",
+                        nearest_snap=None,
+                        modifiers=modifiers,
+                        keycode=keycode,
+                    )
+                current_widget.event(
+                    window_pos=window_pos,
+                    space_pos=space_pos,
+                    event_type="hover_start",
+                    nearest_snap=None,
+                    modifiers=modifiers,
+                    keycode=keycode,
+                )
+                if self.log_events:
+                    self.log_events(f"Converted hover_start: {str(window_pos)}")
+                previous_top_element = current_widget
+            if (
+                event_type == "leftup"
+                and time.time() - self._down_start_time <= 0.30
+                and abs(complex(*window_pos[:2]) - complex(*self._down_start_pos[:2]))
+                < 50
+            ):  # Anything within 0.3 seconds will be converted to a leftclick
+                response = current_widget.event(
+                    window_pos=window_pos,
+                    space_pos=space_pos,
+                    event_type="leftclick",
+                    nearest_snap=nearest_snap,
+                    modifiers=modifiers,
+                    keycode=keycode,
+                )
+                if self.log_events:
+                    self.log_events(f"Converted leftclick: {str(window_pos)}")
+            elif event_type == "leftup":
+                if self.log_events:
+                    self.log_events(
+                        f"Did not convert to click, {time.time() - self._down_start_time}"
+                    )
+                response = current_widget.event(
+                    window_pos=window_pos,
+                    space_pos=space_pos,
+                    event_type=event_type,
+                    nearest_snap=nearest_snap,
+                    modifiers=modifiers,
+                    keycode=keycode,
+                )
+                # print ("Leftup called for widget #%d" % i )
+                # print (response)
+            else:
+                response = current_widget.event(
+                    window_pos=window_pos,
+                    space_pos=space_pos,
+                    event_type=event_type,
+                    nearest_snap=nearest_snap,
+                    modifiers=modifiers,
+                    keycode=keycode,
+                )
 
-            previous_top_element = self._handle_hover_state_changes(
-                window_pos,
-                event_type,
-                previous_top_element,
-                current_widget,
-                space_pos,
-                modifiers,
-                keycode,
-                i,
-            )
+            ##################
+            # PROCESS RESPONSE
+            ##################
+            if type(response) is tuple:
+                # print (f"Nearest snap provided")
+                # We get two additional parameters which are the screen location of the nearest snap point
+                params = response[1:]
+                response = response[0]
+                if len(params) > 1:
+                    new_x_space = params[0]
+                    new_y_space = params[1]
+                    new_x = window_pos[0]
+                    new_y = window_pos[1]
 
-            response = self._handle_leftclick_conversion(
-                window_pos,
-                event_type,
-                space_pos,
-                nearest_snap,
-                modifiers,
-                keycode,
-                current_widget,
-            )
+                    sdx = new_x_space - space_pos[0]
+                    if current_matrix is not None and not current_matrix.is_identity():
+                        sdx *= get_matrix_scale(current_matrix)
+                    snap_x = window_pos[0] + sdx
+                    sdy = new_y_space - space_pos[1]
+                    if current_matrix is not None and not current_matrix.is_identity():
+                        sdy *= current_matrix.value_scale_y()
+                    # print("Shift x by %.1f pixel (%.1f), Shift y by %.1f pixel (%.1f)" % (sdx, odx, sdy, ody))
+                    snap_y = window_pos[1] + sdy
 
-            response = self._process_snap_response(
-                response, space_pos, window_pos, current_matrix
-            )
+                    # dx = new_x - self.last_position[0]
+                    # dy = new_y - self.last_position[1]
+                    if snap_x is None:
+                        nearest_snap = None
+                    else:
+                        # We are providing the space and screen coordinates
+                        snap_space = current_matrix.point_in_inverse_space(
+                            (snap_x, snap_y)
+                        )
+                        nearest_snap = (
+                            snap_space[0],
+                            snap_space[1],
+                            snap_x,
+                            snap_y,
+                        )
+                        self.pane.last_snap = nearest_snap
 
             if response == RESPONSE_ABORT:
                 self.hit_chain.clear()
                 return True
             elif response == RESPONSE_CONSUME:
+                # if event_type in ("leftdown", "middledown", "middleup", "leftup", "move", "leftclick"):
+                #      widgetname = type(current_widget).__name__
+                #      print("Event %s was consumed by %s" % (event_type, widgetname))
                 return True
             elif response == RESPONSE_CHAIN:
                 continue
@@ -1453,7 +938,9 @@ class Scene(Module, Job):
         if platform.system() == "Linux":
             if cursor == "sizing":
                 new_cursor = wx.CURSOR_SIZENWSE
-            elif cursor in ("size_nw", "size_se", "size_sw", "size_ne"):
+            elif cursor in ("size_nw", "size_se"):
+                new_cursor = wx.CURSOR_SIZING
+            elif cursor in ("size_sw", "size_ne"):
                 new_cursor = wx.CURSOR_SIZING
         if new_cursor != self._cursor or always:
             self._cursor = new_cursor
@@ -1473,100 +960,39 @@ class Scene(Module, Job):
         self.widget_root.interface_widget.add_widget(-1, widget, properties)
 
     # --- Centralised snap_point calculation
-    def _calculate_snap_points_optimized(self, my_x, my_y, length_sq):
+    def _calculate_snap_points(self, my_x, my_y, length):
         """
-        Recalculate the snap element attraction points using squared distance for better performance.
+        Recalculate the snap element attraction points
 
-        @param length_sq: squared distance threshold
+        @param length:
         @return:
         """
-        # If we have a KD-tree available, use a radius search to avoid iterating all points
-        tree = getattr(self, "_attraction_tree", None)
-        if tree is not None:
-            try:
-                radius = math.sqrt(length_sq)
-                idxs = tree.query_ball_point([my_x, my_y], r=radius)
-                for i in idxs:
-                    pts = self.snap_attraction_points[i]
-                    # Respect modification mode: do not snap to emphasized points when modifying
-                    if self.pane.modif_active and pts[3]:
-                        continue
-                    self.snap_display_points.append([pts[0], pts[1], pts[2]])
-                return
-            except Exception:
-                # Fall back to the previous approach on any error
-                pass
-
-        # Fallback: linear scan if no KD-tree
         for pts in self.snap_attraction_points:
-            if self.pane.modif_active and pts[3]:
-                # No snap points for emphasized objects during modification
-                continue
-
-            # Use squared distance for better performance (avoid sqrt)
-            dx = pts[0] - my_x
-            dy = pts[1] - my_y
-            dist_sq = dx * dx + dy * dy
-
-            if dist_sq <= length_sq:
+            if self.pane.modif_active:
+                if pts[3]:
+                    # No snap points for emphasized objects.
+                    continue
+            if abs(pts[0] - my_x) <= length and abs(pts[1] - my_y) <= length:
                 self.snap_display_points.append([pts[0], pts[1], pts[2]])
 
-    def _calculate_grid_points_optimized(self, my_x, my_y, length_sq):
+    def _calculate_grid_points(self, my_x, my_y, length):
         """
-        Recalculate the local grid points using squared distance for better performance.
+        Recalculate the local grid points
 
-        @param length_sq: squared distance threshold
+        @param length:
         @return:
         """
-        # Use KD-tree for grid queries when available to avoid scanning entire grid
-        grid_tree = getattr(self.pane.grid, "_grid_tree", None)
-        if grid_tree is not None:
-            try:
-                radius = math.sqrt(length_sq)
-                idxs = grid_tree.query_ball_point([my_x, my_y], r=radius)
-                gp = self.pane.grid.grid_points
-                for i in idxs:
-                    pts = gp[i]
-                    self.snap_display_points.append([pts[0], pts[1], TYPE_GRID])
-                return
-            except Exception:
-                pass
-
-        # Fallback: linear scan
         for pts in self.pane.grid.grid_points:
-            # Use squared distance for better performance (avoid sqrt)
-            dx = pts[0] - my_x
-            dy = pts[1] - my_y
-            dist_sq = dx * dx + dy * dy
-
-            if dist_sq <= length_sq:
+            if abs(pts[0] - my_x) <= length and abs(pts[1] - my_y) <= length:
                 self.snap_display_points.append([pts[0], pts[1], TYPE_GRID])
-
-    @signal_listener("element_property_update")
-    @signal_listener("element_property_reload")
-    @signal_listener("rebuild_tree")
-    @signal_listener("modified_by_tool")
-    def on_external_element_change(self, *args, **kwargs):
-        """
-        Listens to element changes and resets the attraction point cache.
-        """
-        self._reset_attraction_cache()
-
-    def _reset_attraction_cache(self):
-        """
-        Resets the cached attraction points forcing a recalculation on next use.
-        """
-        self.snap_attraction_points = None
 
     def _calculate_attraction_points(self):
         """
-        Looks at all elements and identifies all attraction points with optimized processing.
+        Looks at all elements (all_points=True) or at non-selected elements (all_points=False) and identifies all
+        attraction points (center, corners, sides)
         """
         self.context.elements.set_start_time("attr_calc_points")
-
         self.snap_attraction_points = []  # Clear all
-
-        # Pre-build translation table for better performance
         translation_table = {
             "bounds top_left": TYPE_BOUND,
             "bounds top_right": TYPE_BOUND,
@@ -1582,59 +1008,16 @@ class Scene(Module, Job):
             "midpoint": TYPE_MIDDLE_SMALL,
         }
 
-        # Batch process elements for better performance
-        points_list = []
-        # Minimum distance of 2 scaled pixels (spx) - provides appropriate snap tolerance 
-        # that scales with zoom level, ensuring consistent snap behavior across different view scales
-        minimum_distance = float(Length("2spx"))
-        for node in self.context.elements.elems():
-            # print(f"Debug: Processing node {node.type}")
-            if hasattr(node, "as_geometry"):
-                geom = node.as_geometry()
-                # Let's take all start and end points of lines and curves
-                # but only if they are further away than a small epsilon to avoid duplicates
-                lastpt = None
-                for idx, seg in enumerate(geom.segments[: geom.index]):
-                    segtype = geom._segtype(seg)
-                    if segtype == TYPE_END:
-                        lastpt = None
-                    if segtype in NON_GEOMETRY_TYPES:
-                        continue
-                    pt0 = seg[0]  # Start point
-                    pt1 = geom.position(idx, 0.5)
-                    pt2 = seg[-1]  # End point
-
-                    def added(pt, lastpt, pt_type):
-                        if lastpt is None or abs(pt - lastpt) > minimum_distance:
-                            points_list.append(
-                                [pt.real, pt.imag, pt_type, node.emphasized]
-                            )
-                            lastpt = pt
-                        return lastpt
-
-                    lastpt = added(pt0, lastpt, TYPE_POINT)
-                    lastpt = added(pt1, lastpt, TYPE_MIDDLE_SMALL)
-                    lastpt = added(pt2, lastpt, TYPE_POINT)
-                # Other element types can be added here as needed
-            elif hasattr(node, "points"):
-                emph = node.emphasized
-                # Extend the list instead of appending one by one for better performance
-                for pt in node.points:
-                    if len(pt) >= 3:
-                        pt_type = translation_table.get(pt[2], TYPE_POINT)
-                        points_list.append([pt[0], pt[1], pt_type, emph])
-
-        self.snap_attraction_points = points_list
-
-        # Build KD-tree for attraction points for faster repeated queries when available
-        try:
-            if _cKDTree is not None and len(self.snap_attraction_points) > 0:
-                pts_arr = np.array([[p[0], p[1]] for p in self.snap_attraction_points], dtype=float)
-                self._attraction_tree = _cKDTree(pts_arr)
-            else:
-                self._attraction_tree = None
-        except Exception:
-            self._attraction_tree = None
+        for e in self.context.elements.flat(types=elem_nodes):
+            emph = e.emphasized
+            if hasattr(e, "points"):
+                for pt in e.points:
+                    try:
+                        pt_type = translation_table[pt[2]]
+                    except:
+                        print(f"Unknown type: {pt[2]}")
+                        pt_type = TYPE_POINT
+                    self.snap_attraction_points.append([pt[0], pt[1], pt_type, emph])
 
         self.context.elements.set_end_time(
             "attr_calc_points",
@@ -1643,172 +1026,74 @@ class Scene(Module, Job):
 
     def calculate_display_points(self, my_x, my_y, snap_points, snap_grid):
         """
-        Recalculate the points that need to be displayed for the user with optimized calculations.
+        Recalculate the points that need to be displayed for the user.
 
         @return:
         """
         self.snap_display_points = []
         if my_x is None:
             return
-
-        # Early exit if nothing to snap to
-        if not snap_points and not snap_grid:
-            return
-
-        # Calculate attraction points only if needed and not already cached
-        if snap_points and self.snap_attraction_points is None:
+        if self.snap_attraction_points is None and snap_points:
             self._calculate_attraction_points()
-            # print(f"Calculated {len(self.snap_attraction_points) if self.snap_attraction_points else 0} attraction points.")
 
-        # Cache matrix and scale calculations
         matrix = self.widget_root.scene_widget.matrix
-        scale = get_matrix_scale(matrix)
-        if scale == 0:
-            return
+        length = self.context.show_attract_len / get_matrix_scale(matrix)
 
-        # Pre-calculate squared distances for better performance
-        show_length = self.context.show_attract_len / scale
-        show_length_sq = show_length * show_length
-
-        # Calculate snap points with optimized distance checking
         if snap_points and self.snap_attraction_points:
-            self._calculate_snap_points_optimized(my_x, my_y, show_length_sq)
+            self._calculate_snap_points(my_x, my_y, length)
 
-        # Prepare KD-tree for grid points if available and needed
-        try:
-            gp = self.pane.grid.grid_points
-        except Exception:
-            gp = None
-        if gp and _cKDTree is not None:
-            try:
-                # Build or rebuild if missing or size changed
-                grid_tree = getattr(self.pane.grid, "_grid_tree", None)
-                if grid_tree is None or getattr(grid_tree, "n", None) != len(gp):
-                    grid_xy = np.asarray(gp, dtype=float)
-                    try:
-                        self.pane.grid._grid_tree = _cKDTree(grid_xy)
-                    except Exception:
-                        self.pane.grid._grid_tree = None
-            except Exception:
-                pass
-
-        # Calculate grid points with optimized distance checking
         if snap_grid and self.pane.grid.grid_points:
-            self._calculate_grid_points_optimized(my_x, my_y, show_length_sq)
+            self._calculate_grid_points(my_x, my_y, length)
 
     def calculate_snap(self, my_x, my_y):
         """
-        Calculates the nearest_snap with optimized distance calculations.
+        Calculates the nearest_snap
         """
+        # Loop through display points, find closest.
         res_x = None
         res_y = None
-
-        if not self.snap_display_points or my_x is None:
-            return res_x, res_y
-
-        # Cache matrix scale calculation
-        matrix = self.widget_root.scene_widget.matrix
-        scale = get_matrix_scale(matrix)
-        if scale == 0:
-            return res_x, res_y
-
-        # Pre-calculate action threshold
-        action_threshold_sq = (self.context.action_attract_len / scale) ** 2
-
-        # Find closest point using squared distance (or KD-tree when available)
-        min_delta_sq = float("inf")
-        closest_x = None
-        closest_y = None
-
-        if _cKDTree is not None and len(self.snap_display_points) > 32:
-            try:
-                pts = np.asarray(self.snap_display_points, dtype=float)
-                tree = _cKDTree(pts[:, :2])
-                dist, idx = tree.query(
-                    [my_x, my_y],
-                    k=1,
-                    distance_upper_bound=np.sqrt(action_threshold_sq),
-                )
-                if np.isfinite(dist) and idx < len(pts):
-                    closest_x = pts[idx, 0]
-                    closest_y = pts[idx, 1]
-                    min_delta_sq = dist * dist
-            except Exception:
-                closest_x = None
-                closest_y = None
-                min_delta_sq = float("inf")
-
-        if closest_x is None:
-            if len(self.snap_display_points) > 32:
-                try:
-                    pts = np.asarray(self.snap_display_points, dtype=float)
-                    dxy = pts[:, :2] - np.array([my_x, my_y], dtype=float)
-                    d2 = dxy[:, 0] * dxy[:, 0] + dxy[:, 1] * dxy[:, 1]
-                    idx = int(np.argmin(d2))
-                    min_delta_sq = float(d2[idx])
-                    closest_x = float(pts[idx, 0])
-                    closest_y = float(pts[idx, 1])
-                except Exception:
-                    closest_x = None
-                    closest_y = None
-                    min_delta_sq = float("inf")
-
-            if closest_x is None:
-                for pt in self.snap_display_points:
-                    dx = pt[0] - my_x
-                    dy = pt[1] - my_y
-                    delta_sq = dx * dx + dy * dy
-
-                    if delta_sq < min_delta_sq:
-                        closest_x = pt[0]
-                        closest_y = pt[1]
-                        min_delta_sq = delta_sq
-
-        # Check if closest point is within action threshold
-        if closest_x is not None and min_delta_sq <= action_threshold_sq:
-            res_x = closest_x
-            res_y = closest_y
-
+        if self.snap_display_points and my_x is not None:
+            # Has to be lower than the action threshold
+            min_delta = float("inf")
+            new_x = None
+            new_y = None
+            for pt in self.snap_display_points:
+                dx = pt[0] - my_x
+                dy = pt[1] - my_y
+                delta = dx * dx + dy * dy
+                if delta < min_delta:
+                    new_x = pt[0]
+                    new_y = pt[1]
+                    min_delta = delta
+            if new_x is not None:
+                matrix = self.widget_root.scene_widget.matrix
+                pixel = self.context.action_attract_len / get_matrix_scale(matrix)
+                if abs(new_x - my_x) <= pixel and abs(new_y - my_y) <= pixel:
+                    # If the distance is small enough: snap.
+                    res_x = new_x
+                    res_y = new_y
         return res_x, res_y
 
     def get_snap_point(self, sx, sy, modifiers):
-        """
-        Get the snap point for given coordinates with optimized logic.
-        """
-        if not self.needs_snap:
-            return None, None
         resx = sx
         resy = sy
-
-        # Determine snap settings based on modifiers
         sgrid = self.context.snap_grid
         spoints = self.context.snap_points
-
         if "shift" in modifiers:
             sgrid = not sgrid
             spoints = False
-
-        # Early exit if no snapping needed
-        if not sgrid and not spoints:
-            return resx, resy
-
-        # Reset attraction points if shift is pressed (inverting snap behavior)
-        needs_reset = "shift" in modifiers
-        if needs_reset:
-            self.reset_snap_attraction()
-
-        # Calculate display points and find snap
-        self.calculate_display_points(sx, sy, spoints, sgrid)
-        nx, ny = self.calculate_snap(sx, sy)
-
-        if nx is not None:
-            resx = nx
-            resy = ny
-
-        # Reset attraction points again if shift was pressed
-        if needs_reset:
-            self.reset_snap_attraction()
-
+        if sgrid or spoints:
+            if "shift" in modifiers:
+                # Need to recalculate
+                self.reset_snap_attraction()
+            self.calculate_display_points(sx, sy, spoints, sgrid)
+            nx, ny = self.calculate_snap(sx, sy)
+            if nx is not None:
+                resx = nx
+                resy = ny
+            if "shift" in modifiers:
+                # Need to recalculate again
+                self.reset_snap_attraction()
         return resx, resy
 
     def reset_snap_attraction(self):

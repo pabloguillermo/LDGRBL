@@ -17,8 +17,8 @@ class ReticleWidget(Widget):
     gives a new tracking reticle.
     """
 
-    def __init__(self, scene, **kwargs):
-        Widget.__init__(self, scene, all=False, **kwargs)
+    def __init__(self, scene):
+        Widget.__init__(self, scene, all=False)
         self.reticles = {}
         self.pen = wx.Pen()
 
@@ -71,6 +71,7 @@ class ReticleWidget(Widget):
                 for index, ret in enumerate(self.reticles):
                     r = self.reticles[ret]
                     self.pen.SetColour(Color.distinct(index + 2).hex)
+                    self.pen.SetWidth(2)
                     gc.SetPen(self.pen)
                     x = r[0]
                     y = r[1]
@@ -78,6 +79,9 @@ class ReticleWidget(Widget):
                         x = 0
                         y = 0
                     x, y = self.scene.convert_scene_to_window([x, y])
-                    gc.DrawEllipse(x - 5, y - 5, 10, 10)
+                    # Circle with crosshair, like the laser position in LightBurn
+                    gc.DrawEllipse(x - 8, y - 8, 16, 16)
+                    gc.StrokeLine(x - 14, y, x + 14, y)
+                    gc.StrokeLine(x, y - 14, x, y + 14)
         except AttributeError:
             pass

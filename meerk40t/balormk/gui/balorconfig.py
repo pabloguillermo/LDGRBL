@@ -1,9 +1,9 @@
 import wx
 
 from meerk40t.device.gui.defaultactions import DefaultActionPanel
-from meerk40t.device.gui.effectspanel import EffectsPanel
 from meerk40t.device.gui.formatterpanel import FormatterPanel
 from meerk40t.device.gui.warningpanel import WarningPanel
+from meerk40t.device.gui.effectspanel import EffectsPanel
 from meerk40t.gui.choicepropertypanel import ChoicePropertyPanel
 from meerk40t.gui.icons import icons8_administrative_tools
 from meerk40t.gui.mwindow import MWindow
@@ -13,12 +13,6 @@ _ = wx.GetTranslation
 
 
 class BalorConfiguration(MWindow):
-    """BalorConfiguration - User interface panel for laser cutting operations
-    **Technical Purpose:**
-    Provides user interface controls for balorconfiguration functionality. Integrates with lens_size, balorpin for enhanced functionality.
-    **End-User Perspective:**
-    This panel provides user interface controls for balorconfiguration functionality in MeerK40t."""
-
     def __init__(self, *args, **kwds):
         super().__init__(550, 700, *args, **kwds)
         window_context = self.context
@@ -54,9 +48,7 @@ class BalorConfiguration(MWindow):
             ("balor-global", _("Global")),
             ("balor-global-timing", _("Timings")),
             ("balor-extra", _("Extras")),
-            ("balor-effects", _("Effects")),
-            ("balor-defaults", _("Operation Defaults")),
-            #            ("balor-corfile", _("Correction")),
+#            ("balor-corfile", _("Correction")),
         )
         self.test_bits = ""
         injector = (
@@ -118,26 +110,22 @@ class BalorConfiguration(MWindow):
                     injector=injection,
                 )
                 self.panels.append(newpanel)
-                newpanel.Reparent(self.notebook_main)
                 self.notebook_main.AddPage(newpanel, pagetitle)
 
-        # newpanel = EffectsPanel(self, id=wx.ID_ANY, context=self.context)
-        # self.panels.append(newpanel)
-        # self.notebook_main.AddPage(newpanel, _("Effects"))
+        newpanel = EffectsPanel(self, id=wx.ID_ANY, context=self.context)
+        self.panels.append(newpanel)
+        self.notebook_main.AddPage(newpanel, _("Effects"))
 
         newpanel = WarningPanel(self, id=wx.ID_ANY, context=self.context)
         self.panels.append(newpanel)
-        newpanel.Reparent(self.notebook_main)
         self.notebook_main.AddPage(newpanel, _("Warning"))
 
         newpanel = DefaultActionPanel(self, id=wx.ID_ANY, context=self.context)
         self.panels.append(newpanel)
-        newpanel.Reparent(self.notebook_main)
         self.notebook_main.AddPage(newpanel, _("Default Actions"))
 
         newpanel = FormatterPanel(self, id=wx.ID_ANY, context=self.context)
         self.panels.append(newpanel)
-        newpanel.Reparent(self.notebook_main)
         self.notebook_main.AddPage(newpanel, _("Display Options"))
 
         self.Layout()
@@ -256,5 +244,5 @@ class BalorConfiguration(MWindow):
     @signal_listener("activate;device")
     def on_device_changes(self, *args):
         # Device activated, make sure we are still fine...
-        if self.context.device.name != "balor":
+        if self.context.device.name != 'balor':
             wx.CallAfter(self.Close)

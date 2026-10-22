@@ -14,7 +14,7 @@ from meerk40t.svgelements import (
     Point,
     Rect,
 )
-from meerk40t.core.geomstr import Geomstr
+from meerk40t.tools.geomstr import Geomstr
 
 
 class RectNode(Node, Stroked, FunctionalParameter, LabelDisplay, Suppressable):
@@ -102,19 +102,11 @@ class RectNode(Node, Stroked, FunctionalParameter, LabelDisplay, Suppressable):
         return f"{self.__class__.__name__}('{self.type}', {str(self._parent)})"
 
     def __copy__(self):
-        obj = RectNode.__new__(RectNode)
-        obj.__dict__.update(self.__dict__)
-        obj._children = list()
-        obj._references = list()
-        obj._points = list()
-        obj._default_map = dict()
-        obj._parent = None
-        obj._root = None
-        # Deep-copy mutable style/transform objects
-        obj.matrix = copy(self.matrix)
-        obj.stroke = copy(self.stroke)
-        obj.fill = copy(self.fill)
-        return obj
+        nd = self.node_dict
+        nd["matrix"] = copy(self.matrix)
+        nd["stroke"] = copy(self.stroke)
+        nd["fill"] = copy(self.fill)
+        return RectNode(**nd)
 
     @property
     def shape(self):
@@ -392,12 +384,3 @@ class RectNode(Node, Stroked, FunctionalParameter, LabelDisplay, Suppressable):
         self.ry = self.rx
 
         self.altered()
-
-    def set_geometry(self, geom):
-        # We need to change ourself into a PathNode
-        new_settings = dict(self.node_dict)
-        new_settings["type"] = "elem path"
-        new_settings["geometry"] = geom
-        new_settings["matrix"] = Matrix()
-        node = self.replace_node(keep_children=True, **new_settings)
-        return node

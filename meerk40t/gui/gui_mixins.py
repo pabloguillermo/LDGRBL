@@ -158,7 +158,6 @@ class FormatPainter:
             if not data:
                 return
             effect_parent = get_effect_parent(self.template)
-            # _("Paste format")
             with self.context.elements.undoscope("Paste format"):
                 for node in data:
                     if node is self.template:
@@ -512,8 +511,6 @@ class Warnings:
                         dx += ds
 
                     for refnode in op.children:
-                        if not hasattr(refnode, "node"):
-                            continue
                         node = refnode.node
                         bb = getattr(node, "paint_bounds", None)
                         if bb is None:

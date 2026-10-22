@@ -31,7 +31,7 @@ from ..device.basedevice import (
     PLOT_SETTING,
     PLOT_START,
 )
-from ..core.geomstr import Geomstr
+from ..tools.geomstr import Geomstr
 from .builder import MoshiBuilder
 
 
@@ -451,7 +451,7 @@ class MoshiDriver(Parameters):
         self.rapid_mode()
         self._move_absolute(int(x), int(y))
 
-    def move_rel(self, dx, dy, confined=False):
+    def move_rel(self, dx, dy):
         """
         Requests laser move relative position dx, dy in physical units
 
@@ -459,18 +459,6 @@ class MoshiDriver(Parameters):
         @param dy:
         @return:
         """
-        if confined:
-            new_x = self.native_x * self.service.view.native_scale_x + dx
-            new_y = self.native_y * self.service.view.native_scale_y + dy
-            if new_x < 0:
-                dx = - self.native_x * self.service.view.native_scale_x
-            elif new_x > self.service.view.width:
-                dx = self.service.view.width - self.native_x * self.service.view.native_scale_x 
-            if new_y < 0:
-                dy = - self.native_y * self.service.view.native_scale_y
-            elif new_y > self.service.view.height:
-                dy = self.service.view.height - self.native_y * self.service.view.native_scale_y
-
         unit_dx, unit_dy = self.service.view.position(dx, dy, vector=True)
         self.rapid_mode()
         x = self.native_x + unit_dx
@@ -533,7 +521,7 @@ class MoshiDriver(Parameters):
         if self.state in (DRIVER_STATE_PROGRAM, DRIVER_STATE_MODECHANGE):
             self.rapid_mode()
 
-        if self.state == DRIVER_STATE_RASTER:
+        if self.state == self.state == DRIVER_STATE_RASTER:
             self.pipe_channel("Final Raster Home")
             self.home()
         self.state = DRIVER_STATE_FINISH

@@ -20,7 +20,7 @@ from meerk40t.gui.wxutils import get_gc_scale
 from meerk40t.gui.scene.sceneconst import HITCHAIN_HIT, RESPONSE_CHAIN, RESPONSE_CONSUME
 from meerk40t.gui.scene.scenespacewidget import SceneSpaceWidget
 from meerk40t.gui.scene.widget import Widget
-from meerk40t.core.geomstr import Geomstr
+from meerk40t.tools.geomstr import Geomstr
 from meerk40t.tools.pmatrix import PMatrix
 
 WIDTH_MULT = 10
@@ -195,8 +195,8 @@ class CorFileWidget(Widget):
     Widget for cor file creation routine.
     """
 
-    def __init__(self, scene, **kwargs):
-        Widget.__init__(self, scene, all=True, **kwargs)
+    def __init__(self, scene):
+        Widget.__init__(self, scene, all=True)
         self.name = "Corfile"
         self.render = LaserRender(scene.context)
         self.geometry = cor_file_geometry()

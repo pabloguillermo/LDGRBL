@@ -1,13 +1,16 @@
 import platform
-import time
-from math import isinf
 
 import wx
 from wx import aui
 
 from meerk40t.gui.choicepropertypanel import ChoicePropertyPanel
+from meerk40t.core.planner import START_FROM_ABSOLUTE, START_FROM_USER_ORIGIN
+from meerk40t.core.units import Length
 from meerk40t.gui.icons import (
     get_default_icon_size,
+    icons8_home_filled,
+    icons8_place_marker,
+    icons8_user_location,
     icon_closed_door,
     icon_open_door,
     icon_update_plan,
@@ -21,7 +24,6 @@ from meerk40t.gui.icons import (
     icons8_save,
 )
 from meerk40t.gui.navigationpanels import Drag, Jog, JogDistancePanel, MovePanel
-from meerk40t.core.laserjob import LaserJob
 from meerk40t.gui.wxutils import (
     HoverButton,
     ScrolledPanel,
@@ -32,100 +34,11 @@ from meerk40t.gui.wxutils import (
     wxButton,
     wxCheckBox,
     wxComboBox,
-    wxListCtrl,
     wxStaticText,
-    dispatch_to_main_thread,
-    safe_enable_control,
 )
-from meerk40t.core.planner import STAGE_PLAN_BLOB
 from meerk40t.kernel import lookup_listener, signal_listener
 
 _ = wx.GetTranslation
-
-# Laser-Control override slider: center = 0%, each step = 5% (GRBL allows ~10%..200%)
-OVERRIDE_STEP_PERCENT = 5
-OVERRIDE_SLIDER_MIN = 1
-OVERRIDE_SLIDER_MAX = 41
-OVERRIDE_SLIDER_CENTER = 21
-
-
-def queue_cutplan_to_spooler(context, optimize=True, hold_policy="laserpane"):
-    """
-    Build a cut plan from the current scene and spool it to the active device.
-
-    hold_policy "laserpane": honour Laser tab Hold (re-spool last plan only if it has blob).
-    hold_policy "never": always rebuild from the scene (used after Parameter-Test).
-    """
-    if not context.elements.have_burnable_elements():
-        wx.MessageBox(
-            _(
-                "Nothing to burn. Operations need assigned shapes "
-                "(check the Operations tree after Create Pattern)."
-            ),
-            _("Queue Job"),
-            wx.OK | wx.ICON_INFORMATION,
-        )
-        return False
-    device = context.device
-    if device is None or getattr(device, "spooler", None) is None:
-        wx.MessageBox(
-            _("Connect your laser device first (Laser tab → Connect)."),
-            _("Queue Job"),
-            wx.OK | wx.ICON_WARNING,
-        )
-        return False
-
-    if context.elements.have_unassigned_elements():
-        answer = wx.MessageBox(
-            _(
-                "Some shapes are not assigned to any operation (Operations tree → "
-                "yellow Unassigned bar, or Elements still outside Cut/Engrave).\n\n"
-                "Only assigned shapes are sent to the laser — e.g. the outer frame "
-                "may cut while inner detail is skipped.\n\n"
-                "Fix: expand your Cut op → Re-Classify, enable Fill on Cut if inner "
-                "art has fill but no stroke, or drag shapes onto the Cut op.\n\n"
-                "Queue anyway?"
-            ),
-            _("Unassigned shapes"),
-            wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
-        )
-        if answer != wx.YES:
-            return False
-
-    prefer_threaded = context.setting(bool, "prefer_threaded_mode", True)
-    prefix = "threaded " if prefer_threaded else ""
-
-    last_plan = context.laserpane_plan or context.planner.get_last_plan()
-    states, _info = (
-        context.planner.get_plan_stage(last_plan) if last_plan else (None, "")
-    )
-    has_blob = states is not None and STAGE_PLAN_BLOB in states
-
-    use_hold = (
-        hold_policy == "laserpane"
-        and context.laserpane_hold
-        and last_plan
-        and context.planner.has_content(last_plan)
-        and has_blob
-    )
-    if use_hold:
-        context(f"plan{last_plan} spool\n")
-    else:
-        new_plan = context.planner.get_free_plan()
-        if optimize:
-            context(
-                f"{prefix}plan{new_plan} clear copy preprocess validate blob preopt optimize spool\n"
-            )
-        else:
-            context(
-                f"{prefix}plan{new_plan} clear copy preprocess validate blob spool\n"
-            )
-        if prefer_threaded and context.setting(bool, "autoshow_task_window", True):
-            context("window open ThreadInfo\n")
-
-    if context.auto_spooler:
-        context("window open JobSpooler\n")
-    return True
 
 
 def register_panel_laser(window, context):
@@ -181,14 +94,6 @@ def register_panel_laser(window, context):
     pane.helptext = _("Laser job control panel")
     pane.control = notebook
     pane.dock_proportion = 270
-    for panel in (
-        laser_panel,
-        jog_drag,
-        plan_panel,
-        optimize_panel,
-        move_panel
-    ):
-        panel.Reparent(notebook)
     notebook.AddPage(laser_panel, _("Laser"))
     notebook.AddPage(jog_drag, _("Jog"))
     notebook.AddPage(plan_panel, _("Plan"))
@@ -240,23 +145,7 @@ def register_panel_laser(window, context):
 
 class LaserPanel(wx.Panel):
     """
-    Main laser job execution and control interface providing comprehensive device management, job execution controls, safety systems, and real-time parameter adjustment.
-
-    **Technical Details:**
-    - Purpose: Central control panel for laser operations including device selection, job execution, safety arming, parameter adjustment, and optimization controls with real-time device state synchronization
-    - Signals: Multiple listeners including "optimize", "pwm_mode_changed", "device;modified", "device;renamed", "device;connected", "pause", "laser_armed", "laserpane_arm", "plan" for comprehensive device and job state management
-    - Help Section: laserpanel
-
-    **User Interface:**
-    - Device selection dropdown with configuration access button for multi-device management
-    - Primary execution controls (Start/Pause/Stop) with safety arm/disarm system to prevent accidental firing
-    - Secondary operation buttons (Outline/Simulate) for job preview and testing with background processing options
-    - Real-time power and speed adjustment sliders with override controls for running jobs
-    - Optimization toggle with dynamic enable/disable based on device capabilities
-    - Rotary active status indicator for rotary engraving operations
-    - Comprehensive tooltip system explaining all control functions and safety warnings
-    - Settings persistence for control states and user preferences across sessions
-    - Dynamic UI adaptation based on device capabilities and current job state
+    Contains all elements to control the execution of the job
     """
 
     def __init__(self, *args, context=None, **kwds):
@@ -267,8 +156,11 @@ class LaserPanel(wx.Panel):
         self.context.themes.set_window_colors(self)
         self.SetHelpText("laserpanel")
         self.context.root.setting(bool, "laserpane_arm", True)
-        self.context.setting(bool, "laserpane_hold", False)
-        self.context.setting(str, "laserpane_plan", "z")
+        root = self.context.root
+        root.setting(int, "job_start_from", START_FROM_ABSOLUTE)
+        root.setting(int, "job_origin", 0)
+        root.setting(bool, "job_cut_selected", False)
+        root.setting(bool, "job_use_selection_origin", False)
 
         sizer_main = wx.BoxSizer(wx.VERTICAL)
         self.icon_size = 0.5 * get_default_icon_size(self.context)
@@ -302,6 +194,18 @@ class LaserPanel(wx.Panel):
         minsize = 32
         self.btn_config_laser.SetMinSize(dip_size(self, minsize, -1))
         self.sizer_devices.Add(self.btn_config_laser, 0, wx.EXPAND, 0)
+
+        # Laser position, like the status line of LightBurn's laser window
+        sizer_position = wx.BoxSizer(wx.HORIZONTAL)
+        self.label_position = wxStaticText(self, wx.ID_ANY, "")
+        self.label_position.SetToolTip(
+            _("Last known position of the laser head (double click to refresh)")
+        )
+        self.label_origin = wxStaticText(self, wx.ID_ANY, "", style=wx.ALIGN_RIGHT)
+        self.label_origin.SetToolTip(_("User origin of the active device"))
+        sizer_position.Add(self.label_position, 1, wx.ALIGN_CENTER_VERTICAL, 0)
+        sizer_position.Add(self.label_origin, 1, wx.ALIGN_CENTER_VERTICAL, 0)
+        sizer_main.Add(sizer_position, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
 
         sizer_control = wx.BoxSizer(wx.HORIZONTAL)
         sizer_main.Add(sizer_control, 0, wx.EXPAND, 0)
@@ -356,6 +260,42 @@ class LaserPanel(wx.Panel):
         self.button_stop.SetFocusColour(self.context.themes.get("stop_fg_focus"))
         sizer_control.Add(self.button_stop, 1, wx.EXPAND, 0)
 
+        sizer_control_move = wx.BoxSizer(wx.HORIZONTAL)
+        sizer_main.Add(sizer_control_move, 0, wx.EXPAND, 0)
+
+        self.button_outline = wxButton(self, wx.ID_ANY, _("Frame"))
+        self.button_outline.SetToolTip(
+            _("Trace the rectangular frame of the job")
+            + "\n"
+            + _("Right click: trace the convex hull of the job")
+        )
+        self.button_outline.SetBitmap(
+            icons8_pentagon.GetBitmap(
+                resize=self.icon_size,
+            )
+        )
+        sizer_control_move.Add(self.button_outline, 1, wx.EXPAND, 0)
+
+        self.button_home = wxButton(self, wx.ID_ANY, _("Home"))
+        self.button_home.SetToolTip(_("Send the laser to its home position"))
+        self.button_home.SetBitmap(
+            icons8_home_filled.GetBitmap(
+                resize=self.icon_size,
+            )
+        )
+        sizer_control_move.Add(self.button_home, 1, wx.EXPAND, 0)
+
+        self.button_goto_origin = wxButton(self, wx.ID_ANY, _("Go to Origin"))
+        self.button_goto_origin.SetToolTip(
+            _("Move the laser to the user origin (or to 0,0 if there is none)")
+        )
+        self.button_goto_origin.SetBitmap(
+            icons8_place_marker.GetBitmap(
+                resize=self.icon_size,
+            )
+        )
+        sizer_control_move.Add(self.button_goto_origin, 1, wx.EXPAND, 0)
+
         sizer_control_misc = wx.BoxSizer(wx.HORIZONTAL)
         sizer_main.Add(sizer_control_misc, 0, wx.EXPAND, 0)
 
@@ -379,15 +319,6 @@ class LaserPanel(wx.Panel):
 
         self.check_laser_arm()
 
-        self.button_outline = wxButton(self, wx.ID_ANY, _("Outline"))
-        self.button_outline.SetToolTip(_("Trace the outline of the job"))
-        self.button_outline.SetBitmap(
-            icons8_pentagon.GetBitmap(
-                resize=self.icon_size,
-            )
-        )
-        sizer_control_misc.Add(self.button_outline, 1, wx.EXPAND, 0)
-
         self.button_simulate = wxButton(self, wx.ID_ANY, _("Simulate"))
         self.button_simulate.SetToolTip(_("Simulate the Design"))
         self.button_simulate.SetBitmap(
@@ -397,8 +328,18 @@ class LaserPanel(wx.Panel):
         )
         sizer_control_misc.Add(self.button_simulate, 1, wx.EXPAND, 0)
 
-        sizer_control_update = wx.BoxSizer(wx.HORIZONTAL)
-        sizer_main.Add(sizer_control_update, 0, wx.EXPAND, 0)
+        self.button_set_origin = wxButton(self, wx.ID_ANY, _("Set Origin"))
+        self.button_set_origin.SetToolTip(
+            _("Use the current laser position as user origin")
+            + "\n"
+            + _("Right click: clear the user origin")
+        )
+        self.button_set_origin.SetBitmap(
+            icons8_user_location.GetBitmap(
+                resize=self.icon_size,
+            )
+        )
+        sizer_control_misc.Add(self.button_set_origin, 1, wx.EXPAND, 0)
 
         box = wx.BoxSizer(wx.HORIZONTAL)
         self.rotary_indicator = wxStaticText(
@@ -411,10 +352,48 @@ class LaserPanel(wx.Panel):
         box.Add(self.rotary_indicator, 1, wx.ALIGN_CENTER_VERTICAL, 0)
         sizer_main.Add(box, 0, wx.EXPAND, 0)
 
-        sizer_source = wx.BoxSizer(wx.HORIZONTAL)
-        sizer_main.Add(sizer_source, 0, wx.EXPAND, 0)
+        # Job placement: Start From + Job Origin + cut options
+        sizer_job = StaticBoxSizer(self, wx.ID_ANY, _("Job"), wx.HORIZONTAL)
+        sizer_main.Add(sizer_job, 0, wx.EXPAND, 0)
+        sizer_job_options = wx.BoxSizer(wx.VERTICAL)
+        sizer_job.Add(sizer_job_options, 1, wx.EXPAND, 0)
 
-        self.checkbox_optimize = wxCheckBox(self, wx.ID_ANY, _("Optimize"))
+        sizer_start_from = wx.BoxSizer(wx.HORIZONTAL)
+        lbl_start_from = wxStaticText(self, wx.ID_ANY, _("Start From:"))
+        self.combo_start_from = wxComboBox(
+            self,
+            wx.ID_ANY,
+            choices=[
+                _("Absolute Coords"),
+                _("User Origin"),
+                _("Current Position"),
+            ],
+            style=wx.CB_DROPDOWN | wx.CB_READONLY,
+        )
+        self.combo_start_from.SetToolTip(
+            _("Absolute Coords: burn the job where it is placed on the scene")
+            + "\n"
+            + _("User Origin: place the job origin at the user origin")
+            + "\n"
+            + _("Current Position: place the job origin at the current laser position")
+        )
+        sizer_start_from.Add(lbl_start_from, 0, wx.ALIGN_CENTER_VERTICAL, 0)
+        sizer_start_from.Add(self.combo_start_from, 1, wx.ALIGN_CENTER_VERTICAL, 0)
+        sizer_job_options.Add(sizer_start_from, 0, wx.EXPAND, 0)
+
+        self.checkbox_cut_selected = wxCheckBox(
+            self, wx.ID_ANY, _("Cut Selected Graphics")
+        )
+        self.checkbox_cut_selected.SetToolTip(
+            _("Only burn the elements that are selected on the scene")
+        )
+        self.checkbox_selection_origin = wxCheckBox(
+            self, wx.ID_ANY, _("Use Selection Origin")
+        )
+        self.checkbox_selection_origin.SetToolTip(
+            _("Establish the job origin from the selection instead of the whole job")
+        )
+        self.checkbox_optimize = wxCheckBox(self, wx.ID_ANY, _("Optimize Cut Path"))
         self.checkbox_optimize.SetToolTip(_("Enable/Disable Optimize"))
         self.checkbox_optimize.SetValue(self.context.planner.do_optimization)
         self.checkbox_adjust = wxCheckBox(self, wx.ID_ANY, _("Override"))
@@ -423,9 +402,45 @@ class LaserPanel(wx.Panel):
             + "\n"
             + _("This affects running jobs, so use with care!")
         )
+        for ctrl in (
+            self.checkbox_cut_selected,
+            self.checkbox_selection_origin,
+            self.checkbox_optimize,
+            self.checkbox_adjust,
+        ):
+            sizer_job_options.Add(ctrl, 0, wx.EXPAND, 0)
 
-        sizer_source.Add(self.checkbox_optimize, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-        sizer_source.Add(self.checkbox_adjust, 1, wx.ALIGN_CENTER_VERTICAL, 0)
+        sizer_job_origin = wx.BoxSizer(wx.VERTICAL)
+        lbl_job_origin = wxStaticText(self, wx.ID_ANY, _("Job Origin"))
+        sizer_job_origin.Add(lbl_job_origin, 0, wx.ALIGN_CENTER_HORIZONTAL, 0)
+        grid_origin = wx.GridSizer(3, 3, 0, 0)
+        origin_tips = (
+            _("Top left"),
+            _("Top center"),
+            _("Top right"),
+            _("Middle left"),
+            _("Center"),
+            _("Middle right"),
+            _("Bottom left"),
+            _("Bottom center"),
+            _("Bottom right"),
+        )
+        self.radio_origin = []
+        for idx, tip in enumerate(origin_tips):
+            radio = wx.RadioButton(
+                self, wx.ID_ANY, "", style=wx.RB_GROUP if idx == 0 else 0
+            )
+            radio.SetToolTip(
+                _("Job origin: {position}").format(position=tip)
+                + "\n"
+                + _("This point of the job is placed at the Start From position")
+            )
+            radio.Bind(wx.EVT_RADIOBUTTON, self.on_job_origin(idx))
+            grid_origin.Add(radio, 0, wx.ALIGN_CENTER, 0)
+            self.radio_origin.append(radio)
+        sizer_job_origin.Add(grid_origin, 0, wx.ALIGN_CENTER_HORIZONTAL, 0)
+        sizer_job.Add(sizer_job_origin, 0, wx.EXPAND | wx.LEFT, 4)
+
         sizer_manipulate = wx.BoxSizer(wx.VERTICAL)
         sizer_main.Add(sizer_manipulate, 0, wx.EXPAND, 0)
 
@@ -434,88 +449,34 @@ class LaserPanel(wx.Panel):
         lb_power = wxStaticText(self, wx.ID_ANY, _("Power"))
         self.label_power = wxStaticText(self, wx.ID_ANY, "0%")
         self.slider_power = wx.Slider(
-            self,
-            wx.ID_ANY,
-            value=OVERRIDE_SLIDER_CENTER,
-            minValue=OVERRIDE_SLIDER_MIN,
-            maxValue=OVERRIDE_SLIDER_MAX,
+            self, wx.ID_ANY, value=10, minValue=1, maxValue=20
         )
-        self.text_power_override = TextCtrl(
-            self, wx.ID_ANY, "0", limited=True, check="float"
-        )
-        self.text_power_override.SetMinSize(dip_size(self, 40, -1))
-        self.btn_set_power = wxButton(self, wx.ID_ANY, _("Set"))
-        self.sizer_power.Add(lb_power, 0, wx.ALIGN_CENTER_VERTICAL, 0)
+        self.sizer_power.Add(lb_power, 1, wx.ALIGN_CENTER_VERTICAL, 0)
         self.sizer_power.Add(self.slider_power, 3, wx.ALIGN_CENTER_VERTICAL, 0)
-        self.sizer_power.Add(self.text_power_override, 0, wx.ALIGN_CENTER_VERTICAL, 0)
-        self.sizer_power.Add(self.btn_set_power, 0, wx.ALIGN_CENTER_VERTICAL, 0)
-        self.sizer_power.Add(self.label_power, 0, wx.ALIGN_CENTER_VERTICAL, 0)
+        self.sizer_power.Add(self.label_power, 1, wx.ALIGN_CENTER_VERTICAL, 0)
         self.slider_power.SetToolTip(
-            _("Adjust laser power override in {step}% steps (center = 0%).").format(
-                step=OVERRIDE_STEP_PERCENT
-            )
+            _("Increases/decreases the regular laser power by this amount.")
             + "\n"
-            + _("Right = more power, left = less. Affects running jobs.")
-        )
-        self.text_power_override.SetToolTip(
-            _("Percent change from normal, e.g. 70 or -30. Press Set to apply.")
+            + _("This affects running jobs, so use with care!")
         )
 
         self.sizer_speed = wx.BoxSizer(wx.HORIZONTAL)
         sizer_manipulate.Add(self.sizer_speed, 0, wx.EXPAND, 0)
         lb_speed = wxStaticText(self, wx.ID_ANY, _("Speed"))
         self.label_speed = wxStaticText(self, wx.ID_ANY, "0%")
+        self.slider_size = 20
         self.power_mode = "relative"
         self.slider_speed = wx.Slider(
-            self,
-            wx.ID_ANY,
-            value=OVERRIDE_SLIDER_CENTER,
-            minValue=OVERRIDE_SLIDER_MIN,
-            maxValue=OVERRIDE_SLIDER_MAX,
+            self, wx.ID_ANY, value=10, minValue=1, maxValue=20
         )
-        self.text_speed_override = TextCtrl(
-            self, wx.ID_ANY, "0", limited=True, check="float"
-        )
-        self.text_speed_override.SetMinSize(dip_size(self, 40, -1))
-        self.btn_set_speed = wxButton(self, wx.ID_ANY, _("Set"))
-        self.sizer_speed.Add(lb_speed, 0, wx.ALIGN_CENTER_VERTICAL, 0)
+        self.sizer_speed.Add(lb_speed, 1, wx.ALIGN_CENTER_VERTICAL, 0)
         self.sizer_speed.Add(self.slider_speed, 3, wx.ALIGN_CENTER_VERTICAL, 0)
-        self.sizer_speed.Add(self.text_speed_override, 0, wx.ALIGN_CENTER_VERTICAL, 0)
-        self.sizer_speed.Add(self.btn_set_speed, 0, wx.ALIGN_CENTER_VERTICAL, 0)
-        self.sizer_speed.Add(self.label_speed, 0, wx.ALIGN_CENTER_VERTICAL, 0)
+        self.sizer_speed.Add(self.label_speed, 1, wx.ALIGN_CENTER_VERTICAL, 0)
         self.slider_speed.SetToolTip(
-            _("Adjust feed override in {step}% steps (center = 0%).").format(
-                step=OVERRIDE_STEP_PERCENT
-            )
+            _("Increases/decreases the regular speed by this amount.")
             + "\n"
-            + _("Right = faster, left = slower. Affects running jobs.")
+            + _("This affects running jobs, so use with care!")
         )
-        self.text_speed_override.SetToolTip(
-            _("Percent change from normal, e.g. 50 or -20. Press Set to apply.")
-        )
-
-        sizer_progress = wx.BoxSizer(wx.VERTICAL)
-        sizer_progress_header = wx.BoxSizer(wx.HORIZONTAL)
-        self.label_job_progress = wxStaticText(self, wx.ID_ANY, _("Job progress"))
-        self.label_progress_percent = wxStaticText(
-            self, wx.ID_ANY, "", style=wx.ALIGN_RIGHT
-        )
-        sizer_progress_header.Add(self.label_job_progress, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-        sizer_progress_header.Add(
-            self.label_progress_percent, 0, wx.ALIGN_CENTER_VERTICAL, 0
-        )
-        sizer_progress.Add(sizer_progress_header, 0, wx.EXPAND, 0)
-        self.gauge_job_progress = wx.Gauge(
-            self, range=100, style=wx.GA_HORIZONTAL | wx.GA_SMOOTH
-        )
-        self.gauge_job_progress.SetValue(0)
-        sizer_progress.Add(self.gauge_job_progress, 0, wx.EXPAND, 0)
-        self.label_progress_detail = wxStaticText(self, wx.ID_ANY, _("No job running"))
-        sizer_progress.Add(self.label_progress_detail, 0, wx.EXPAND, 0)
-        sizer_main.Add(sizer_progress, 1, wx.EXPAND | wx.ALL, 4)
-
-        self._progress_last_update = 0.0
-        self._progress_update_delta = 1.0
 
         self.SetSizer(sizer_main)
         self.Layout()
@@ -532,19 +493,30 @@ class LaserPanel(wx.Panel):
         self.Bind(wx.EVT_BUTTON, self.on_button_outline, self.button_outline)
         self.button_outline.Bind(wx.EVT_RIGHT_DOWN, self.on_button_outline_right)
         self.Bind(wx.EVT_BUTTON, self.on_button_simulate, self.button_simulate)
-        self.button_simulate.Bind(wx.EVT_RIGHT_DOWN, self.on_button_simulate_right)
         self.Bind(wx.EVT_COMBOBOX, self.on_combo_devices, self.combo_devices)
         self.Bind(wx.EVT_CHECKBOX, self.on_check_adjust, self.checkbox_adjust)
         self.Bind(wx.EVT_SLIDER, self.on_slider_speed, self.slider_speed)
         self.Bind(wx.EVT_SLIDER, self.on_slider_power, self.slider_power)
-        self.Bind(wx.EVT_BUTTON, self.on_set_power_override, self.btn_set_power)
-        self.Bind(wx.EVT_BUTTON, self.on_set_speed_override, self.btn_set_speed)
         self.Bind(wx.EVT_CHECKBOX, self.on_optimize, self.checkbox_optimize)
         # self.btn_config_laser.Bind(wx.EVT_LEFT_DOWN, self.on_config_button)
         self.btn_config_laser.Bind(wx.EVT_BUTTON, self.on_config_button)
         self.combo_devices.Bind(wx.EVT_RIGHT_DOWN, self.on_control_right)
         self.btn_config_laser.Bind(wx.EVT_RIGHT_DOWN, self.on_control_right)
+        self.Bind(wx.EVT_BUTTON, self.on_button_home, self.button_home)
+        self.Bind(wx.EVT_BUTTON, self.on_button_goto_origin, self.button_goto_origin)
+        self.Bind(wx.EVT_BUTTON, self.on_button_set_origin, self.button_set_origin)
+        self.button_set_origin.Bind(wx.EVT_RIGHT_DOWN, self.on_button_clear_origin)
+        self.Bind(wx.EVT_COMBOBOX, self.on_combo_start_from, self.combo_start_from)
+        self.Bind(wx.EVT_CHECKBOX, self.on_check_cut_selected, self.checkbox_cut_selected)
+        self.Bind(
+            wx.EVT_CHECKBOX,
+            self.on_check_selection_origin,
+            self.checkbox_selection_origin,
+        )
+        self.label_position.Bind(wx.EVT_LEFT_DCLICK, self.update_position)
         # end wxGlade
+        self.update_job_controls()
+        self.update_position()
         self.checkbox_adjust.SetValue(False)
         self.on_check_adjust(None)
         self.update_override_controls()
@@ -554,145 +526,6 @@ class LaserPanel(wx.Panel):
             disable_window(self)
         # Check for a real click of the execute button
         self.button_start_was_clicked = False
-        self.update_job_progress(force=True)
-
-    @staticmethod
-    def _format_elapsed(seconds):
-        if isinf(seconds) or seconds < 0:
-            return "∞"
-        hours, remainder = divmod(seconds, 3600)
-        minutes, secs = divmod(remainder, 60)
-        return f"{int(hours)}:{int(minutes):02d}:{int(secs):02d}"
-
-    def update_job_progress(self, force=False):
-        now = time.time()
-        if not force and now - self._progress_last_update < self._progress_update_delta:
-            return
-        self._progress_last_update = now
-
-        percentage = -1
-        detail = _("No job running")
-        job_label = ""
-
-        try:
-            spooler = self.context.device.spooler
-        except AttributeError:
-            spooler = None
-
-        if spooler is not None and spooler.queue:
-            job_pos = 0
-            job_len = 0
-            job_remaining = 0.0
-            job_elapsed = 0.0
-            queue_pos = 0
-            queue_len = len(spooler.queue)
-            job_active = False
-
-            for idx, spool_obj in enumerate(spooler.queue):
-                if spool_obj.is_running() and isinstance(spool_obj, LaserJob):
-                    job_active = True
-                    queue_pos = idx + 1
-                    job_label = spool_obj.label or ""
-                    if spool_obj.steps_total == 0:
-                        spool_obj.calc_steps()
-                    if spool_obj.steps_total > 0:
-                        job_len = spool_obj.steps_total
-                        job_pos = spool_obj.steps_done
-                    else:
-                        job_len = len(spool_obj.items)
-                        job_pos = spool_obj.item_index
-                    if spool_obj.time_started:
-                        job_elapsed = now - spool_obj.time_started
-                    job_estimate = spool_obj.estimate_time()
-                    if job_estimate > job_elapsed:
-                        job_remaining = job_estimate - job_elapsed
-                    elif job_pos > 0 and job_len > 0:
-                        job_remaining = job_elapsed * (job_len - job_pos) / job_pos
-                    if job_len > 0:
-                        percentage = min(100, int(100 * job_pos / job_len))
-                    break
-
-            if job_active:
-                buffer_note = ""
-                driver = getattr(spooler, "driver", None)
-                if driver is not None and hasattr(driver, "get_internal_queue_status"):
-                    internal_current, internal_total = driver.get_internal_queue_status()
-                    if internal_total:
-                        buffer_note = f" · {internal_current}/{internal_total}"
-                if job_label:
-                    detail = _("{label}: {steps}/{total} · {remaining} left{buffer}").format(
-                        label=job_label,
-                        steps=job_pos,
-                        total=job_len,
-                        remaining=self._format_elapsed(job_remaining),
-                        buffer=buffer_note,
-                    )
-                else:
-                    detail = _("Steps {steps}/{total} · {remaining} left{buffer}").format(
-                        steps=job_pos,
-                        total=job_len,
-                        remaining=self._format_elapsed(job_remaining),
-                        buffer=buffer_note,
-                    )
-                if queue_len > 1:
-                    detail += _(" · Queue {pos}/{len}").format(
-                        pos=queue_pos, len=queue_len
-                    )
-            elif queue_len > 0:
-                detail = _("Queued ({count} jobs)").format(count=queue_len)
-                percentage = 0
-
-        if percentage < 0:
-            self.gauge_job_progress.SetValue(0)
-            self.label_progress_percent.SetLabel("")
-            self.label_progress_detail.SetLabel(detail)
-        else:
-            self.gauge_job_progress.SetValue(percentage)
-            self.label_progress_percent.SetLabel(f"{percentage}%")
-            self.label_progress_detail.SetLabel(detail)
-
-        self.gauge_job_progress.Refresh()
-        self.Layout()
-
-    @signal_listener("spooler;queue")
-    @signal_listener("spooler;update")
-    @signal_listener("spooler;completed")
-    @signal_listener("driver;position")
-    @signal_listener("emulator;position")
-    @dispatch_to_main_thread
-    def on_spooler_progress(self, origin, *args):
-        if origin in ("spooler;completed", "spooler;queue"):
-            self._progress_last_update = 0.0
-        self.update_job_progress(force=origin == "spooler;completed")
-
-    @staticmethod
-    def _slider_to_factor(sliderval):
-        offset = sliderval - OVERRIDE_SLIDER_CENTER
-        return max(
-            0.1,
-            min(2.0, 1.0 + offset * (OVERRIDE_STEP_PERCENT / 100.0)),
-        )
-
-    @staticmethod
-    def _factor_to_slider(factor):
-        offset = int(round((factor - 1.0) * 100 / OVERRIDE_STEP_PERCENT))
-        return max(
-            OVERRIDE_SLIDER_MIN,
-            min(OVERRIDE_SLIDER_MAX, OVERRIDE_SLIDER_CENTER + offset),
-        )
-
-    @staticmethod
-    def _format_override_percent(factor):
-        return f"{'+' if factor > 1 else ''}{100 * (factor - 1.0):.0f}%"
-
-    @staticmethod
-    def _parse_override_percent(text):
-        s = text.strip().replace("%", "").replace(" ", "")
-        if not s:
-            return 1.0
-        if s.startswith("+"):
-            s = s[1:]
-        return max(0.1, min(2.0, 1.0 + float(s) / 100.0))
 
     def update_override_controls(self):
         def set_boundaries(slider, current_value, min_value, max_value):
@@ -711,19 +544,14 @@ class LaserPanel(wx.Panel):
             value = self.context.device.driver.power_scale
             if value != 1:
                 override = True
-            sliderval = self._factor_to_slider(value)
-            set_boundaries(
-                self.slider_power,
-                sliderval,
-                OVERRIDE_SLIDER_MIN,
-                OVERRIDE_SLIDER_MAX,
-            )
+            half = self.slider_size / 2
+            sliderval = int(value * half)
+            sliderval = max(1, min(self.slider_size, sliderval))
+            set_boundaries(self.slider_power, sliderval, 1, self.slider_size)
             self.slider_power.SetToolTip(
-                _("Adjust laser power override in {step}% steps (center = 0%).").format(
-                    step=OVERRIDE_STEP_PERCENT
-                )
+                _("Increases/decreases the regular laser power by this amount.")
                 + "\n"
-                + _("Right = more power, left = less. Affects running jobs.")
+                + _("This affects running jobs, so use with care!")
             )
             self.power_mode = "relative"
             self.on_slider_power(None)
@@ -756,13 +584,10 @@ class LaserPanel(wx.Panel):
             value = self.context.device.driver.speed_scale
             if value != 1:
                 override = True
-            sliderval = self._factor_to_slider(value)
-            set_boundaries(
-                self.slider_speed,
-                sliderval,
-                OVERRIDE_SLIDER_MIN,
-                OVERRIDE_SLIDER_MAX,
-            )
+            half = self.slider_size / 2
+            sliderval = int(value * half)
+            sliderval = max(1, min(self.slider_size, sliderval))
+            set_boundaries(self.slider_speed, sliderval, 1, self.slider_size)
             self.on_slider_speed(None)
 
         self.sizer_power.Show(flag_power)
@@ -775,35 +600,22 @@ class LaserPanel(wx.Panel):
         self.checkbox_adjust.SetValue(override)
         self.slider_power.Enable(override)
         self.slider_speed.Enable(override)
-        self.text_power_override.Enable(override and self.power_mode == "relative")
-        self.btn_set_power.Enable(override and self.power_mode == "relative")
-        self.text_speed_override.Enable(override)
-        self.btn_set_speed.Enable(override)
         self.Layout()
 
     def on_check_adjust(self, event):
         if self.checkbox_adjust.GetValue():
             self.slider_power.Enable(True)
             self.slider_speed.Enable(True)
-            self.text_speed_override.Enable(True)
-            self.btn_set_speed.Enable(True)
-            if self.power_mode == "relative":
-                self.text_power_override.Enable(True)
-                self.btn_set_power.Enable(True)
         else:
             self.slider_power.Enable(False)
             self.slider_speed.Enable(False)
-            self.text_power_override.Enable(False)
-            self.btn_set_power.Enable(False)
-            self.text_speed_override.Enable(False)
-            self.btn_set_speed.Enable(False)
             if (
                 hasattr(self.context.device.driver, "has_adjustable_power")
                 and self.context.device.driver.has_adjustable_power
             ):
                 if event is not None:
                     self.context.device.driver.set_power_scale(1.0)
-                self.slider_power.SetValue(OVERRIDE_SLIDER_CENTER)
+                self.slider_power.SetValue(10)
                 self.on_slider_power(None)
             if (
                 hasattr(self.context.device.driver, "has_adjustable_speed")
@@ -811,17 +623,18 @@ class LaserPanel(wx.Panel):
             ):
                 if event is not None:
                     self.context.device.driver.set_speed_scale(1.0)
-                self.slider_speed.SetValue(OVERRIDE_SLIDER_CENTER)
+                self.slider_speed.SetValue(10)
                 self.on_slider_speed(None)
 
     def on_slider_speed(self, event):
         sliderval = self.slider_speed.GetValue()
-        factor = self._slider_to_factor(sliderval)
+        half = self.slider_size / 2
+        newvalue = sliderval - half  # -> -9 to +10
+        factor = 1 + newvalue / half
         if event is not None:
             self.context.device.driver.set_speed_scale(factor)
-        msg = self._format_override_percent(factor)
+        msg = f"{'+' if factor > 1 else ''}{100 * (factor - 1.0):.0f}%"
         self.label_speed.SetLabel(msg)
-        self.text_speed_override.SetValue(f"{100 * (factor - 1.0):.0f}")
 
     def on_slider_power(self, event):
         sliderval = self.slider_power.GetValue()
@@ -831,32 +644,13 @@ class LaserPanel(wx.Panel):
                 self.context.device.driver.max_power_scale = sliderval
             msg = f"{sliderval}%"
         else:
-            factor = self._slider_to_factor(sliderval)
+            half = self.slider_size / 2
+            newvalue = sliderval - half  # -> -9 to +10
+            factor = 1 + newvalue / half
             if event is not None:
                 self.context.device.driver.set_power_scale(factor)
-            msg = self._format_override_percent(factor)
-            self.text_power_override.SetValue(f"{100 * (factor - 1.0):.0f}")
+            msg = f"{'+' if factor > 1 else ''}{100 * (factor - 1.0):.0f}%"
         self.label_power.SetLabel(msg)
-
-    def on_set_power_override(self, event):
-        if self.power_mode == "maximum":
-            return
-        try:
-            factor = self._parse_override_percent(self.text_power_override.GetValue())
-        except ValueError:
-            return
-        self.context.device.driver.set_power_scale(factor)
-        self.slider_power.SetValue(self._factor_to_slider(factor))
-        self.on_slider_power(None)
-
-    def on_set_speed_override(self, event):
-        try:
-            factor = self._parse_override_percent(self.text_speed_override.GetValue())
-        except ValueError:
-            return
-        self.context.device.driver.set_speed_scale(factor)
-        self.slider_speed.SetValue(self._factor_to_slider(factor))
-        self.on_slider_speed(None)
 
     def on_optimize(self, event):
         newval = bool(self.checkbox_optimize.GetValue())
@@ -865,7 +659,6 @@ class LaserPanel(wx.Panel):
             self.context.signal("optimize", newval)
 
     @signal_listener("optimize")
-    @dispatch_to_main_thread
     def optimize_update(self, origin, *message):
         try:
             newvalue = bool(message[0])
@@ -878,7 +671,6 @@ class LaserPanel(wx.Panel):
             self.checkbox_optimize.SetValue(newvalue)
 
     @signal_listener("pwm_mode_changed")
-    @dispatch_to_main_thread
     def on_pwm_mode_changed(self, origin, *message):
         """
         This is called when the power scale of the device changes.
@@ -890,7 +682,6 @@ class LaserPanel(wx.Panel):
     @signal_listener("device;renamed")
     @lookup_listener("service/device/active")
     @lookup_listener("service/device/available")
-    @dispatch_to_main_thread
     def on_device_changes(self, *args):
         # Devices Initialize.
         self.available_devices = self.context.kernel.services("device")
@@ -915,7 +706,6 @@ class LaserPanel(wx.Panel):
         self.Layout()
 
     @signal_listener("device;connected")
-    @dispatch_to_main_thread
     def on_connectivity(self, *args):
         # There's no signal yet, but there should be one...
         self.update_override_controls()
@@ -936,12 +726,10 @@ class LaserPanel(wx.Panel):
         self.button_pause.SetLabelText(new_caption)
 
     @signal_listener("pause")
-    @dispatch_to_main_thread
     def on_device_pause_toggle(self, origin, *args):
         self.set_pause_color()
 
     @signal_listener("laser_armed")
-    @dispatch_to_main_thread
     def signal_laser_arm(self, origin, *message):
         try:
             newval = bool(message[0])
@@ -953,7 +741,6 @@ class LaserPanel(wx.Panel):
             self.check_laser_arm()
 
     @signal_listener("laserpane_arm")
-    @dispatch_to_main_thread
     def check_laser_arm(self, *args):
         ctxt = self.context.kernel.root
         ctxt.setting(bool, "_laser_may_run", False)
@@ -1061,13 +848,27 @@ class LaserPanel(wx.Panel):
                 )
             )
             return
+
         busy = self.context.kernel.busyinfo
         busy.start(msg=_("Preparing Laserjob..."))
-        queue_cutplan_to_spooler(
-            self.context, optimize=self.checkbox_optimize.GetValue()
-        )
+        plan = self.context.planner.get_or_make_plan("z")
+        self.context.setting(bool, "laserpane_hold", False)
+        if not self.check_job_settings():
+            busy.end()
+            self.button_start_was_clicked = False
+            return
+        if plan.plan and self.context.laserpane_hold:
+            self.context("planz spool\n")
+        else:
+            self.context(
+                self.context.planner.job_plan_command(
+                    "z", optimize=self.checkbox_optimize.GetValue()
+                )
+            )
         self.armed = False
         self.check_laser_arm()
+        if self.context.auto_spooler:
+            self.context("window open JobSpooler\n")
         busy.end()
         self.button_start_was_clicked = False
 
@@ -1075,58 +876,176 @@ class LaserPanel(wx.Panel):
         self.context("pause\n")
 
     def on_button_stop(self, event):  # wxGlade: LaserPanel.<event_handler>
-        if not self.button_stop.IsEnabled():
+        self.context("estop\n")
+
+    def frame_job(self, method):
+        """
+        Trace the frame of the job at the place where it will be burnt.
+        """
+        planner = self.context.planner
+        selected_only = self.context.root.job_cut_selected
+        source = "" if selected_only else "element* "
+        offset = planner.job_offset()
+        if offset is None:
+            if method == "quick" and not selected_only:
+                try:
+                    self.context.device.outline()
+                    return
+                except AttributeError:
+                    pass
+            self.context(f"{source}trace {method}\n")
             return
-        self.button_stop.Enable(False)
-
-        def do_estop():
-            try:
-                self.context("estop\n")
-            finally:
-                wx.CallAfter(safe_enable_control, self.button_stop, True)
-
-        self.context.threaded(do_estop, thread_name="LaserPanel-estop")
+        dx = Length(amount=offset[0]).mm
+        dy = Length(amount=offset[1]).mm
+        self.context(f"{source}trace {method} --dx {dx:.3f}mm --dy {dy:.3f}mm\n")
 
     def on_button_outline(self, event):  # wxGlade: LaserPanel.<event_handler>
-        try:
-            self.context.device.outline()
-        except AttributeError:
-            self.context("element* trace hull\n")
+        self.frame_job("quick")
 
     def on_button_outline_right(self, event):  # wxGlade: LaserPanel.<event_handler>
-        self.context("element* trace quick\n")
+        self.frame_job("hull")
 
-    def simulate(self, in_background=False):
-        if in_background:
-            prefix = "threaded "
-        else:
-            prefix = ""
-            self.context.kernel.busyinfo.start(msg=_("Preparing simulation..."))
+    def on_button_home(self, event):
+        self.context("home\n")
 
-        param = "0"
-        last_plan = self.context.laserpane_plan or self.context.planner.get_last_plan()
-        if self.context.laserpane_hold and self.context.planner.has_content(last_plan):
-            plan = last_plan
+    def on_button_goto_origin(self, event):
+        origin = self.context.planner.get_user_origin()
+        if origin is None:
+            origin = (0, 0)
+        x = Length(amount=origin[0]).mm
+        y = Length(amount=origin[1]).mm
+        self.context(f".move_absolute {x:.3f}mm {y:.3f}mm\n")
+
+    def on_button_set_origin(self, event):
+        try:
+            position = self.context.device.current
+        except AttributeError:
+            return
+        self.context.planner.set_user_origin(position)
+        self.update_position()
+
+    def on_button_clear_origin(self, event):
+        self.context.planner.set_user_origin(None)
+        self.update_position()
+
+    def on_combo_start_from(self, event):
+        self.context.root.job_start_from = self.combo_start_from.GetSelection()
+        self.update_job_controls()
+        self.context.signal("job_settings")
+
+    def on_check_cut_selected(self, event):
+        self.context.root.job_cut_selected = self.checkbox_cut_selected.GetValue()
+        self.update_job_controls()
+        self.context.signal("job_settings")
+
+    def on_check_selection_origin(self, event):
+        self.context.root.job_use_selection_origin = (
+            self.checkbox_selection_origin.GetValue()
+        )
+        self.context.signal("job_settings")
+
+    def on_job_origin(self, index):
+        def handler(event):
+            self.context.root.job_origin = index
+            self.context.signal("job_settings")
+
+        return handler
+
+    @signal_listener("job_settings")
+    def update_job_controls(self, *args):
+        if not wx.IsMainThread():
+            wx.CallAfter(self.update_job_controls)
+            return
+        root = self.context.root
+        start_from = root.job_start_from
+        if start_from < 0 or start_from > 2:
+            start_from = START_FROM_ABSOLUTE
+        self.combo_start_from.SetSelection(start_from)
+        origin = min(8, max(0, root.job_origin))
+        self.radio_origin[origin].SetValue(True)
+        relative = start_from != START_FROM_ABSOLUTE
+        for radio in self.radio_origin:
+            radio.Enable(relative)
+        self.checkbox_cut_selected.SetValue(root.job_cut_selected)
+        self.checkbox_selection_origin.SetValue(root.job_use_selection_origin)
+        self.checkbox_selection_origin.Enable(root.job_cut_selected and relative)
+
+    def _format_position(self, position):
+        units = self.context.units_name
+        x = Length(amount=position[0], preferred_units=units, digits=2)
+        y = Length(amount=position[1], preferred_units=units, digits=2)
+        return f"X: {x.preferred_length}  Y: {y.preferred_length}"
+
+    @signal_listener("user_origin")
+    @signal_listener("driver;position")
+    @signal_listener("emulator;position")
+    def update_position(self, *args):
+        if not wx.IsMainThread():
+            wx.CallAfter(self.update_position)
+            return
+        try:
+            position = self.context.device.current
+            self.label_position.SetLabel(self._format_position(position))
+        except (AttributeError, TypeError):
+            self.label_position.SetLabel("")
+        origin = self.context.planner.get_user_origin()
+        if origin is None:
+            self.label_origin.SetLabel(_("No user origin"))
         else:
-            plan = self.context.planner.get_free_plan()
-            if self.checkbox_optimize.GetValue():
-                self.context(
-                    f"{prefix}plan{plan} clear copy preprocess validate blob preopt optimize finish\n"
-                )
-                param = "1"
-            else:
-                self.context(
-                    f"{prefix}plan{plan} clear copy preprocess validate blob finish\n"
-                )
-        self.context(f"window open Simulation {plan} 0 {param}\n")
-        if not in_background:
-            self.context.kernel.busyinfo.end()
+            self.label_origin.SetLabel(_("Origin") + " " + self._format_position(origin))
+        user_mode = self.context.root.job_start_from == START_FROM_USER_ORIGIN
+        if user_mode and origin is None:
+            self.label_origin.SetForegroundColour(wx.RED)
+        else:
+            self.label_origin.SetForegroundColour(self.label_position.GetForegroundColour())
+        self.Layout()
+
+    def check_job_settings(self):
+        """
+        Warn about job settings that cannot be honoured. Returns False to cancel.
+        """
+        root = self.context.root
+        if root.job_cut_selected and not list(
+            self.context.elements.elems(emphasized=True)
+        ):
+            wx.MessageBox(
+                _(
+                    "'Cut Selected Graphics' is active, but nothing is selected.\n"
+                    "Select the shapes to burn or uncheck the option."
+                ),
+                _("Start job"),
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            return False
+        if (
+            root.job_start_from == START_FROM_USER_ORIGIN
+            and self.context.planner.get_user_origin() is None
+        ):
+            wx.MessageBox(
+                _(
+                    "'Start From' is set to 'User Origin', but no user origin is defined.\n"
+                    "Move the laser and press 'Set Origin' first."
+                ),
+                _("Start job"),
+                wx.OK | wx.ICON_WARNING,
+            )
+            return False
+        return True
 
     def on_button_simulate(self, event):  # wxGlade: LaserPanel.<event_handler>
-        self.simulate(in_background=False)
+        self.context.kernel.busyinfo.start(msg=_("Preparing simulation..."))
 
-    def on_button_simulate_right(self, event):  # wxGlade: LaserPanel.<event_handler>
-        self.simulate(in_background=True)
+        plan = self.context.planner.get_or_make_plan("z")
+        param = "0"
+        if not plan.plan or not self.context.laserpane_hold:
+            optimize = self.checkbox_optimize.GetValue()
+            self.context(
+                self.context.planner.job_plan_command("z", optimize=optimize, final="")
+            )
+            if optimize:
+                param = "1"
+        self.context(f"window open Simulation z 0 {param}\n")
+        self.context.kernel.busyinfo.end()
 
     def on_control_right(self, event):  # wxGlade: LaserPanel.<event_handler>
         self.context("window open DeviceManager\n")
@@ -1150,195 +1069,74 @@ class LaserPanel(wx.Panel):
 
 
 class JobPanel(wx.Panel):
+    """
+    Contains all elements to plan and save the job
+    """
+
     def __init__(self, *args, context=None, **kwds):
         # begin wxGlade: MovePanel.__init__
         kwds["style"] = kwds.get("style", 0) | wx.TAB_TRAVERSAL
         wx.Panel.__init__(self, *args, **kwds)
         self.context = context
         self.context.themes.set_window_colors(self)
-        self.last_selected = None
-        self.list_plan = wxListCtrl(
-            self,
-            wx.ID_ANY,
-            style=wx.LC_HRULES | wx.LC_REPORT | wx.LC_VRULES | wx.LC_SINGLE_SEL,
-            context=self.context,
-            list_name="list_plan",
+
+        sizer_main = wx.BoxSizer(wx.VERTICAL)
+        self._optimize = True
+        self.icon_size = 0.5 * get_default_icon_size(self.context)
+        sizer_control_update = wx.BoxSizer(wx.HORIZONTAL)
+        sizer_main.Add(sizer_control_update, 0, wx.EXPAND, 0)
+
+        self.button_clear = wxButton(self, wx.ID_ANY, _("Clear"))
+        self.button_clear.SetToolTip(_("Clear locally defined plan"))
+        self.button_clear.SetBitmap(icons8_delete.GetBitmap(resize=self.icon_size))
+        sizer_control_update.Add(self.button_clear, 1, 0, 0)
+
+        self.button_update = wxButton(self, wx.ID_ANY, _("Update"))
+        self.button_update.SetToolTip(_("Update the Plan"))
+        self.button_update.SetBitmap(icon_update_plan.GetBitmap(resize=self.icon_size))
+        sizer_control_update.Add(self.button_update, 1, 0, 0)
+
+        self.button_save_file = wxButton(self, wx.ID_ANY, _("Save"))
+        self.button_save_file.SetToolTip(_("Save the job"))
+        self.button_save_file.SetBitmap(icons8_save.GetBitmap(resize=self.icon_size))
+        sizer_control_update.Add(self.button_save_file, 1, 0, 0)
+
+        sizer_source = wx.BoxSizer(wx.HORIZONTAL)
+        sizer_main.Add(sizer_source, 0, wx.EXPAND, 0)
+
+        self.text_plan = TextCtrl(
+            self, wx.ID_ANY, _("--- Empty ---"), style=wx.TE_READONLY
         )
-        self.list_plan.SetToolTip(_("List of prepared cutplans"))
-        self.list_plan.AppendColumn(_("#"), format=wx.LIST_FORMAT_LEFT, width=48)
-        self.list_plan.AppendColumn(_("Plan"), format=wx.LIST_FORMAT_LEFT, width=113)
-        self.list_plan.AppendColumn(_("Status"), format=wx.LIST_FORMAT_LEFT, width=73)
-        self.list_plan.AppendColumn(_("Content"), format=wx.LIST_FORMAT_LEFT, width=73)
-        self.list_plan.resize_columns()
-        # self.btn_clear = wx.Button(self, wx.ID_ANY, _("Clear"))
-        # self.btn_clear.SetToolTip(_("Clear selected plan"))
-        self.btn_update = wx.Button(self, wx.ID_ANY, _("Update"))
-        self.btn_update.SetToolTip(_("Update selected plan"))
-        self.btn_export = wx.Button(self, wx.ID_ANY, _("Export"))
-        self.btn_export.SetToolTip(_("Export selected plan"))
-        self.btn_spool = wx.Button(self, wx.ID_ANY, _("Spool"))
-        self.btn_spool.SetToolTip(_("Spool selected plan"))
+        sizer_source.Add(self.text_plan, 2, 0, 0)
+
         self.context.setting(bool, "laserpane_hold", False)
-        self.context.setting(str, "laserpane_plan", "z")
         self.checkbox_hold = wxCheckBox(self, wx.ID_ANY, _("Hold"))
         self.checkbox_hold.SetToolTip(
             _("Preserve the job between running, rerunning, and execution")
         )
         self.checkbox_hold.SetValue(self.context.laserpane_hold)
-        sizer_main = wx.BoxSizer(wx.VERTICAL)
-        sizer_main.Add(self.list_plan, 1, wx.EXPAND, 0)
-        hsizer_buttons = wx.BoxSizer(wx.HORIZONTAL)
-        # hsizer.Add(self.btn_clear, 0, wx.EXPAND, 0)
-        hsizer_buttons.Add(self.btn_update, 0, wx.EXPAND, 0)
-        hsizer_buttons.Add(self.btn_export, 0, wx.EXPAND, 0)
-        hsizer_buttons.Add(self.btn_spool, 0, wx.EXPAND, 0)
-        hsizer_controls = wx.BoxSizer(wx.HORIZONTAL)
-        hsizer_controls.Add(self.checkbox_hold, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-        sizer_main.Add(hsizer_buttons, 0, wx.EXPAND, 0)
-        sizer_main.Add(hsizer_controls, 0, wx.EXPAND, 0)
+        sizer_source.Add(self.checkbox_hold, 1, wx.ALIGN_CENTER_VERTICAL, 0)
+
         self.SetSizer(sizer_main)
         self.Layout()
-        self.shown = False
-        self.list_plan.Bind(wx.EVT_RIGHT_DOWN, self.on_right_click)
-        self.list_plan.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_selection)
-        # self.btn_clear.Bind(wx.EVT_BUTTON, self.on_clear_plan)
-        self.btn_update.Bind(wx.EVT_BUTTON, self.on_update_plan)
-        self.btn_export.Bind(wx.EVT_BUTTON, self.on_export_plan)
-        self.btn_spool.Bind(wx.EVT_BUTTON, self.on_spool_plan)
-        self.checkbox_hold.Bind(wx.EVT_CHECKBOX, self.on_hold)
-        self.on_selection(None)
 
-    def refresh_plan_list(self):
-        self.list_plan.DeleteAllItems()
-        idx = 0
-        for plan_name in self.context.planner._plan:
-            idx += 1
-            cutplan = self.context.planner._plan[plan_name]
-            state, description = self.context.planner.get_plan_stage(plan_name)
-            item = self.list_plan.InsertItem(idx, f"{idx}")
-            self.list_plan.SetItem(item, 1, plan_name)
-            self.list_plan.SetItem(item, 2, description)
-            itemcount = 0
-            for layer in cutplan.plan:
-                if isinstance(layer, (list, tuple)):
-                    itemcount += len(layer)
-                elif hasattr(layer, "children"):
-                    itemcount += len(layer.children)
-                else:
-                    itemcount += 1
-
-            info = _("{amount} items").format(amount=itemcount)
-            self.list_plan.SetItem(item, 3, info)
-        # Reselect previous selection if possible
-        if self.last_selected is not None:
-            for idx in range(self.list_plan.GetItemCount()):
-                plan_name = self.list_plan.GetItemText(idx, 1)
-                if plan_name == self.last_selected:
-                    self.last_selected = None
-                    self.list_plan.Select(idx)
-                    self.on_selection(None)
-                    break
+        self.Bind(wx.EVT_CHECKBOX, self.on_check_hold, self.checkbox_hold)
+        self.Bind(wx.EVT_BUTTON, self.on_button_save, self.button_save_file)
+        # self.Bind(wx.EVT_BUTTON, self.on_button_load, self.button_load)
+        self.Bind(wx.EVT_BUTTON, self.on_button_clear, self.button_clear)
+        self.Bind(wx.EVT_BUTTON, self.on_button_update, self.button_update)
 
     @signal_listener("plan")
-    @dispatch_to_main_thread
     def plan_update(self, origin, *message):
-        if self.shown:
-            self.refresh_plan_list()
+        plan_name, stage = message[0], message[1]
+        if plan_name == "z":
+            plan = self.context.planner.get_or_make_plan("z")
+            if not len(plan.plan):
+                self.text_plan.SetValue(_("--- Empty ---"))
+            else:
+                self.text_plan.SetValue(f"{str(stage)}: {str(plan)}")
 
-    def on_selection(self, event):
-        can_update = self.list_plan.GetFirstSelected() != -1
-        has_content = False
-        if can_update:
-            plan_name = self.list_plan.GetItemText(self.list_plan.GetFirstSelected(), 1)
-            self.last_selected = plan_name
-            try:
-                has_content = self.context.planner.has_content(plan_name)
-            except KeyError:
-                can_update = False
-        can_export = has_content and hasattr(self.context.device, "extension")
-        self.btn_update.Enable(can_update)
-        self.btn_export.Enable(can_export)
-        self.btn_spool.Enable(has_content)
-
-    def on_spool_plan(self, event):
-        if self.list_plan.GetFirstSelected() == -1:
-            return
-        plan_name = self.list_plan.GetItemText(self.list_plan.GetFirstSelected(), 1)
-        self.context.laserpane_plan = plan_name
-        plan = self.context.planner._plan[plan_name]
-        if len(plan.plan) == 0:
-            wx.MessageBox(
-                _("No items to spool"), _("Spool Plan"), wx.OK | wx.ICON_INFORMATION
-            )
-            return
-        self.context(f"plan{plan_name} spool\n")
-
-    def on_show_details(self, event):
-        if self.list_plan.GetFirstSelected() == -1:
-            return
-        plan_name = self.list_plan.GetItemText(self.list_plan.GetFirstSelected(), 1)
-        msgs = []
-        msgs.append(_("Details of Plan '{plan}':").format(plan=plan_name))
-        with self.context.planner._plan_lock:
-            states = self.context.planner._states.get(plan_name, {})
-        if states:
-            ordered = sorted(states.items(), key=lambda kv: kv[1])
-            start_time = ordered[0][1]
-            previous_time = start_time
-            total_time = ordered[-1][1] - start_time
-            for stage, timestamp in ordered:
-                stagename = self.context.planner.STAGE_DESCRIPTIONS[stage]
-                if total_time > 0:
-                    percent = (
-                        f" ({100 * (timestamp - previous_time) / total_time:.1f}%)"
-                    )
-                else:
-                    percent = ""
-                msgs.append(
-                    f"Stage '{stagename}': {timestamp - previous_time:.1f}s{percent}"
-                )
-                previous_time = timestamp
-            msgs.append(f"Total time: {total_time:.1f}s")
-        else:
-            msgs.append(_("Empty"))
-        # We look at the stages of the given plan.
-        info = "\n".join(msgs)
-        wx.MessageBox(info, _("Plan Details"), wx.OK | wx.ICON_INFORMATION)
-
-    def on_clear_plan(self, event):
-        if self.list_plan.GetFirstSelected() == -1:
-            return
-        plan_name = self.list_plan.GetItemText(self.list_plan.GetFirstSelected(), 1)
-        self.context(f"plan{plan_name} clear finish\n")
-
-    def _do_update_plan(self, background: bool = False):
-        if self.list_plan.GetFirstSelected() == -1:
-            return
-        plan_name = self.list_plan.GetItemText(self.list_plan.GetFirstSelected(), 1)
-        self.last_selected = plan_name
-        if self.context.planner.do_optimization:
-            cmd = f"plan{plan_name} clear copy preprocess validate blob preopt optimize finish\n"
-        else:
-            cmd = f"plan{plan_name} clear copy preprocess validate blob finish\n"
-        if background:
-            self.context(f"threaded {cmd}")
-            if self.context.setting(bool, "autoshow_task_window", True):
-                self.context("window open ThreadInfo\n")
-        else:
-            self.context.kernel.busyinfo.start(msg=_("Updating Plan..."))
-            self.context(cmd)
-            self.context.kernel.busyinfo.end()
-
-    def on_update_plan(self, event):
-        self._do_update_plan()
-
-    def on_update_plan_background(self, event):
-        self._do_update_plan(background=True)
-
-    def on_export_plan(self, event):
-        if self.list_plan.GetFirstSelected() == -1:
-            return
-        plan_name = self.list_plan.GetItemText(self.list_plan.GetFirstSelected(), 1)
+    def on_button_save(self, event):  # wxGlade: LaserPanel.<event_handler>
         gui = self.context.gui
         extension = "txt"
         if hasattr(self.context.device, "extension"):
@@ -1356,50 +1154,33 @@ class JobPanel(wx.Panel):
 
             if not pathname.lower().endswith(f".{extension}"):
                 pathname += f".{extension}"
-            cmd = f'plan{plan_name} save_job "{pathname}"'
-            self.context(f"threaded {cmd}\n")
-            ch = self.context.kernel.channel("console")
-            ch(_("Export started in background — watch Console for progress."))
-            if self.context.setting(bool, "autoshow_task_window", True):
-                self.context("window open ThreadInfo\n")
+            optpart = "preopt optimize " if self.context.planner.do_optimization else ""
+            self.context(
+                f'planz clear copy preprocess validate blob {optpart}save_job "{pathname}"\n'
+            )
 
-    def on_hold(self, event):
+    def on_button_load(self, event):  # wxGlade: LaserPanel.<event_handler>
+        pass
+
+    def on_button_clear(self, event):  # wxGlade: LaserPanel.<event_handler>
+        self.context("planz clear\n")
+
+    def on_button_update(self, event):  # wxGlade: LaserPanel.<event_handler>
+        self.context.kernel.busyinfo.start(msg=_("Updating Plan..."))
+        if self.context.planner.do_optimization:
+            self.context("planz clear copy preprocess validate blob preopt optimize\n")
+        else:
+            self.context("planz clear copy preprocess validate blob\n")
+        self.context.kernel.busyinfo.end()
+
+    def on_check_hold(self, event):
         self.context.laserpane_hold = self.checkbox_hold.GetValue()
 
-    def on_right_click(self, event):
-        # Select the item under the mouse cursor
-        event.Skip()
-        item, flags = self.list_plan.HitTest(event.GetPosition())
-        if item >= 0:
-            self.list_plan.Select(item)
-        item = self.list_plan.GetFirstSelected()
-        if item < 0:
-            return
-        menu = wx.Menu()
-        item = menu.Append(wx.ID_ANY, _("Clear"))
-        self.Bind(wx.EVT_MENU, self.on_clear_plan, item)
-        item = menu.Append(wx.ID_ANY, _("Update"))
-        self.Bind(wx.EVT_MENU, self.on_update_plan, item)
-        item = menu.Append(wx.ID_ANY, _("Update (background)"))
-        self.Bind(wx.EVT_MENU, self.on_update_plan_background, item)
-        item = menu.Append(wx.ID_ANY, _("Export"))
-        self.Bind(wx.EVT_MENU, self.on_export_plan, item)
-        item = menu.Append(wx.ID_ANY, _("Spool"))
-        self.Bind(wx.EVT_MENU, self.on_spool_plan, item)
-        menu.AppendSeparator()
-        item = menu.AppendCheckItem(wx.ID_ANY, _("Details"))
-        self.Bind(wx.EVT_MENU, self.on_show_details, item)
-        self.PopupMenu(menu)
-        menu.Destroy()
+    def pane_show(self, *args):
+        self.button_save_file.Enable(hasattr(self.context.device, "extension"))
 
-    def pane_show(self):
-        self.shown = True
-        self.list_plan.load_column_widths()
-        self.refresh_plan_list()
-
-    def pane_hide(self):
-        self.shown = False
-        self.list_plan.save_column_widths()
+    def pane_hide(self, *args):
+        pass
 
 
 class OptimizePanel(wx.Panel):
@@ -1439,7 +1220,6 @@ class OptimizePanel(wx.Panel):
         self.parent.add_module_delegate(self.optimize_panel)
 
     @signal_listener("optimize")
-    @dispatch_to_main_thread
     def optimize_update(self, origin, *message):
         try:
             newvalue = bool(message[0])
@@ -1451,6 +1231,25 @@ class OptimizePanel(wx.Panel):
         if self.checkbox_optimize.GetValue() != newvalue:
             self.checkbox_optimize.SetValue(newvalue)
             self.optimize_panel.Enable(newvalue)
+
+    def ensure_mutually_exclusive(self, prio: str):
+        # Ensure that opt_inner_first and opt_reduce_travel are mutually exclusive
+        inner_first = self.context.planner.opt_inner_first
+        reduce_travel = self.context.planner.opt_reduce_travel
+        if inner_first and reduce_travel:
+            if prio == "opt_inner_first":
+                self.context.planner.opt_reduce_travel = False
+            else:
+                self.context.planner.opt_inner_first = False
+            self.optimize_panel.reload()
+
+    @signal_listener("opt_inner_first")
+    def opt_inner_update(self, origin, *message):
+        self.ensure_mutually_exclusive("opt_inner_first")
+
+    @signal_listener("opt_reduce_travel")
+    def opt_reduce_travel_update(self, origin, *message):
+        self.ensure_mutually_exclusive("opt_reduce_travel")
 
     def on_optimize(self, event):
         newvalue = bool(self.checkbox_optimize.GetValue())

@@ -13,7 +13,6 @@ from meerk40t.core.node.op_image import ImageOpNode
 from meerk40t.core.node.op_raster import RasterOpNode
 from meerk40t.core.units import UNITS_PER_PIXEL, Angle, Length
 from meerk40t.gui.icons import get_default_icon_size, icons8_detective
-from meerk40t.gui.laserpanel import queue_cutplan_to_spooler
 from meerk40t.gui.mwindow import MWindow
 from meerk40t.gui.wxutils import (
     StaticBoxSizer,
@@ -26,58 +25,21 @@ from meerk40t.gui.wxutils import (
     wxListBox,
     wxStaticText,
 )
-from meerk40t.kernel import Settings, lookup_listener, settings, signal_listener
+from meerk40t.kernel import Settings, lookup_listener, signal_listener
 from meerk40t.svgelements import Color, Matrix
 
 _ = wx.GetTranslation
 
 
 class SaveLoadPanel(wx.Panel):
-    """SaveLoadPanel - Template management interface for test pattern configurations
-
-    **Technical Purpose:**
-    Provides persistent storage and retrieval of test pattern parameter sets. Manages template naming, validation, and file I/O operations for saving/loading complete test configurations. Integrates with Settings framework for configuration persistence and provides callback-based communication with parent panels.
-
-    **End-User Perspective:**
-    This panel lets you save and reuse your test pattern setups. Save commonly used parameter combinations as named templates, then quickly reload them for future testing sessions. Templates store all your test pattern settings including operation type, parameter ranges, colors, and layout options."""
+    """
+    Provides the scaffold for saving and loading of parameter sets.
+    Does not know a lot about the underlying structure of data as it
+    blindly interacts with the parent via the callback routine
+    (could hence work as a generic way to save / load data)
+    """
 
     def __init__(self, *args, context=None, **kwds):
-        kwds["style"] = kwds.get("style", 0) | wx.TAB_TRAVERSAL
-        wx.Panel.__init__(self, *args, **kwds)
-        self.context = context
-        self.context.themes.set_window_colors(self)
-        self.callback = None
-        sizer_main = wx.BoxSizer(wx.VERTICAL)
-        self.SetSizer(sizer_main)
-        sizer_name = wx.BoxSizer(wx.HORIZONTAL)
-        lbl_info = wxStaticText(self, wx.ID_ANY, _("Template-Name"))
-        self.txt_name = TextCtrl(self, wx.ID_ANY, "")
-        self.btn_save = wxButton(self, wx.ID_ANY, _("Save"))
-        self.btn_load = wxButton(self, wx.ID_ANY, _("Load"))
-        self.btn_delete = wxButton(self, wx.ID_ANY, _("Delete"))
-        self.btn_load.Enable(False)
-        self.btn_save.Enable(False)
-        self.btn_delete.Enable(False)
-        sizer_name.Add(lbl_info, 0, wx.ALIGN_CENTER_VERTICAL, 0)
-        sizer_name.Add(self.txt_name, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-        sizer_name.Add(self.btn_save, 0, wx.EXPAND, 0)
-        sizer_name.Add(self.btn_load, 0, wx.EXPAND, 0)
-        sizer_name.Add(self.btn_delete, 0, wx.EXPAND, 0)
-
-        self.choices = []
-        self.list_slots = wxListBox(
-            self, wx.ID_ANY, choices=self.choices, style=wx.LB_SINGLE
-        )
-        self.list_slots.SetToolTip(_("Select an entry to reload"))
-        sizer_main.Add(sizer_name, 0, wx.EXPAND, 0)
-        sizer_main.Add(self.list_slots, 1, wx.EXPAND, 0)
-        self.Layout()
-        self.Bind(wx.EVT_TEXT, self.on_text_change, self.txt_name)
-        self.Bind(wx.EVT_BUTTON, self.on_btn_load, self.btn_load)
-        self.Bind(wx.EVT_BUTTON, self.on_btn_save, self.btn_save)
-        self.Bind(wx.EVT_BUTTON, self.on_btn_delete, self.btn_delete)
-        self.list_slots.Bind(wx.EVT_LISTBOX, self.on_listbox_click)
-        self.list_slots.Bind(wx.EVT_LISTBOX_DCLICK, self.on_listbox_double_click)
         kwds["style"] = kwds.get("style", 0) | wx.TAB_TRAVERSAL
         wx.Panel.__init__(self, *args, **kwds)
         self.context = context
@@ -203,18 +165,15 @@ class SaveLoadPanel(wx.Panel):
 
 
 class TemplatePanel(wx.Panel):
-    """TemplatePanel - User interface panel for laser cutting operations
-    **Technical Purpose:**
-    Provides user interface controls for template functionality. Features label, button controls for user interaction. Integrates with service/device/active, speed_min for enhanced functionality.
-    **End-User Perspective:**
-    This panel provides controls for template functionality. Key controls include "Template-Name" (label), "Save" (button), "Load" (button)."""
+    """
+    Responsible for the generation of testpatterns and the user interface
+    params:
+    context - the current context
+    storage - an instance of kernel.Settings to store/load parameter sets
+    """
 
     DESC_X_AXIS = "Descriptions X-Axis"
     DESC_Y_AXIS = "Descriptions Y-Axis"
-    MIN_PATTERN_SIZE = 0.001
-    MAX_PATTERN_SIZE = 50
-    MIN_GAP_SIZE = 0.0
-    MAX_GAP_SIZE = 50
 
     def __init__(self, *args, context=None, storage=None, **kwds):
         def size_it(ctrl, value):
@@ -229,8 +188,6 @@ class TemplatePanel(wx.Panel):
         self.context.themes.set_window_colors(self)
         self.context.setting(float, "material_description_speed", 250)
         self.context.setting(float, "material_description_power", 1000)
-        self.context.setting(float, "material_operation_speed", None)
-        self.context.setting(float, "material_operation_power", None)
         self.check_raster_description_parameters()
         # Lets have a look whether we still have an operation open that fits the bill...
         self.SetHelpText("testpattern")
@@ -245,8 +202,6 @@ class TemplatePanel(wx.Panel):
             _("Hatch"),
             _("Wobble"),
         ]
-        # Allow the shape to be added a second time for effects, but outside the secondary operation
-
         # Setup 5 Op nodes - they aren't saved yet
         self.default_op = []
         self.secondary_default_op = []
@@ -326,8 +281,7 @@ class TemplatePanel(wx.Panel):
         self.combo_images.SetSelection(0)
         self.check_labels = wxCheckBox(self, wx.ID_ANY, _("Labels"))
         self.check_values = wxCheckBox(self, wx.ID_ANY, _("Values"))
-        self.check_use_vector_labels = wxCheckBox(self, wx.ID_ANY, _("Simple"))
-        self.text_subtitle_x = TextCtrl(self, wx.ID_ANY, "")
+
         self.combo_param_1 = wxComboBox(
             self, id=wx.ID_ANY, style=wx.CB_DROPDOWN | wx.CB_READONLY
         )
@@ -335,9 +289,9 @@ class TemplatePanel(wx.Panel):
         self.text_min_1 = TextCtrl(self, wx.ID_ANY, limited=True, check="float")
         self.text_max_1 = TextCtrl(self, wx.ID_ANY, limited=True, check="float")
         self.text_dim_1 = TextCtrl(self, wx.ID_ANY, limited=True, check="float")
-        self.text_dim_1.set_range(self.MIN_PATTERN_SIZE, self.MAX_PATTERN_SIZE)
+        self.text_dim_1.set_range(0, 50)
         self.text_delta_1 = TextCtrl(self, wx.ID_ANY, limited=True, check="float")
-        self.text_delta_1.set_range(self.MIN_GAP_SIZE, self.MAX_GAP_SIZE)
+        self.text_delta_1.set_range(0, 50)
         self.list_options_1 = wxCheckListBox(
             self, wx.ID_ANY, label=_("Pick values"), majorDimension=3
         )
@@ -353,7 +307,6 @@ class TemplatePanel(wx.Panel):
         )
         self.check_color_direction_1 = wxCheckBox(self, wx.ID_ANY, _("Growing"))
 
-        self.text_subtitle_y = TextCtrl(self, wx.ID_ANY, "")
         self.combo_param_2 = wxComboBox(
             self, id=wx.ID_ANY, style=wx.CB_DROPDOWN | wx.CB_READONLY
         )
@@ -361,12 +314,12 @@ class TemplatePanel(wx.Panel):
         self.text_min_2 = TextCtrl(self, wx.ID_ANY, limited=True, check="float")
         self.text_max_2 = TextCtrl(self, wx.ID_ANY, limited=True, check="float")
         self.text_dim_2 = TextCtrl(self, wx.ID_ANY, limited=True, check="float")
-        self.text_dim_2.set_range(self.MIN_PATTERN_SIZE, self.MAX_PATTERN_SIZE)
+        self.text_dim_2.set_range(0, 50)
         self.list_options_2 = wxCheckListBox(
             self, wx.ID_ANY, label=_("Pick values"), majorDimension=3
         )
         self.text_delta_2 = TextCtrl(self, wx.ID_ANY, limited=True, check="float")
-        self.text_delta_2.set_range(self.MIN_GAP_SIZE, self.MAX_GAP_SIZE)
+        self.text_delta_2.set_range(0, 50)
         self.unit_param_2a = wxStaticText(self, wx.ID_ANY, "")
         self.unit_param_2b = wxStaticText(self, wx.ID_ANY, "")
 
@@ -378,16 +331,10 @@ class TemplatePanel(wx.Panel):
         )
         self.check_color_direction_2 = wxCheckBox(self, wx.ID_ANY, _("Growing"))
 
-        self.check_duplicate_shapes = wxCheckBox(
-            self, wx.ID_ANY, _("Create boundary shape")
-        )
-
         self.button_create = wxButton(self, wx.ID_ANY, _("Create Pattern"))
         self.button_create.SetBitmap(
             icons8_detective.GetBitmap(resize=0.5 * get_default_icon_size(self.context))
         )
-        self.button_queue = wxButton(self, wx.ID_ANY, _("Queue to Spooler"))
-        self.button_queue.Enable(False)
 
         sizer_main = wx.BoxSizer(wx.VERTICAL)
         sizer_param_optype = wx.BoxSizer(wx.HORIZONTAL)
@@ -402,14 +349,12 @@ class TemplatePanel(wx.Panel):
         h1.Add(self.combo_ops, 1, wx.EXPAND, 0)
         self.sizer_param_op.Add(h1, 0, wx.EXPAND, 0)
         self.sizer_param_op.Add(self.combo_images, 0, wx.EXPAND, 0)
-        self.sizer_param_op.Add(self.check_duplicate_shapes, 0, wx.EXPAND, 0)
 
         sizer_param_check = StaticBoxSizer(
             self, wx.ID_ANY, _("Show Labels / Values"), wx.HORIZONTAL
         )
         sizer_param_check.Add(self.check_labels, 1, wx.ALIGN_CENTER_VERTICAL, 0)
         sizer_param_check.Add(self.check_values, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-        sizer_param_check.Add(self.check_use_vector_labels, 1, wx.ALIGN_CENTER_VERTICAL, 0)
 
         sizer_param_optype.Add(self.sizer_param_op, 1, wx.EXPAND, 0)
         sizer_param_optype.Add(sizer_param_check, 1, wx.EXPAND, 0)
@@ -418,12 +363,6 @@ class TemplatePanel(wx.Panel):
         self.sizer_param_x = StaticBoxSizer(
             self, wx.ID_ANY, _("First parameter (X-Axis)"), wx.VERTICAL
         )
-
-        hline_subtitle_1 = wx.BoxSizer(wx.HORIZONTAL)
-        mylbl = wxStaticText(self, wx.ID_ANY, _("Subtitle:"))
-        size_it(mylbl, LABEL_WIDTH)
-        hline_subtitle_1.Add(mylbl, 0, wx.ALIGN_CENTER_VERTICAL, 0)
-        hline_subtitle_1.Add(self.text_subtitle_x, 1, wx.ALIGN_CENTER_VERTICAL, 0)
 
         hline_param_1 = wx.BoxSizer(wx.HORIZONTAL)
         mylbl = wxStaticText(self, wx.ID_ANY, _("Parameter:"))
@@ -480,7 +419,6 @@ class TemplatePanel(wx.Panel):
         hline_color_1.Add(self.combo_color_1, 1, wx.ALIGN_CENTER_VERTICAL, 0)
         hline_color_1.Add(self.check_color_direction_1, 1, wx.ALIGN_CENTER_VERTICAL, 0)
 
-        self.sizer_param_x.Add(hline_subtitle_1, 0, wx.EXPAND, 0)
         self.sizer_param_x.Add(hline_param_1, 0, wx.EXPAND, 0)
         self.sizer_param_x.Add(self.min_max_container_1, 0, wx.EXPAND, 0)
         self.sizer_param_x.Add(self.list_options_1, 0, wx.EXPAND, 0)
@@ -491,12 +429,6 @@ class TemplatePanel(wx.Panel):
         self.sizer_param_y = StaticBoxSizer(
             self, wx.ID_ANY, _("Second parameter (Y-Axis)"), wx.VERTICAL
         )
-
-        hline_subtitle_2 = wx.BoxSizer(wx.HORIZONTAL)
-        mylbl = wxStaticText(self, wx.ID_ANY, _("Subtitle:"))
-        size_it(mylbl, LABEL_WIDTH)
-        hline_subtitle_2.Add(mylbl, 0, wx.ALIGN_CENTER_VERTICAL, 0)
-        hline_subtitle_2.Add(self.text_subtitle_y, 1, wx.ALIGN_CENTER_VERTICAL, 0)
 
         hline_param_2 = wx.BoxSizer(wx.HORIZONTAL)
         mylbl = wxStaticText(self, wx.ID_ANY, _("Parameter:"))
@@ -554,7 +486,6 @@ class TemplatePanel(wx.Panel):
         hline_color_2.Add(self.combo_color_2, 1, wx.ALIGN_CENTER_VERTICAL, 0)
         hline_color_2.Add(self.check_color_direction_2, 1, wx.ALIGN_CENTER_VERTICAL, 0)
 
-        self.sizer_param_y.Add(hline_subtitle_2, 0, wx.EXPAND, 0)
         self.sizer_param_y.Add(hline_param_2, 0, wx.EXPAND, 0)
         self.sizer_param_y.Add(self.min_max_container_2, 0, wx.EXPAND, 0)
         self.sizer_param_y.Add(self.list_options_2, 0, wx.EXPAND, 0)
@@ -568,7 +499,6 @@ class TemplatePanel(wx.Panel):
         sizer_main.Add(sizer_param_optype, 0, wx.EXPAND, 0)
         sizer_main.Add(sizer_param_xy, 0, wx.EXPAND, 0)
         sizer_main.Add(self.button_create, 0, wx.EXPAND, 0)
-        sizer_main.Add(self.button_queue, 0, wx.EXPAND, 0)
 
         sizer_info = StaticBoxSizer(self, wx.ID_ANY, _("How to use it"), wx.VERTICAL)
         infomsg = _("To provide the best burning results, the parameters of operations")
@@ -603,19 +533,11 @@ class TemplatePanel(wx.Panel):
         sizer_main.Add(sizer_info, 1, wx.EXPAND, 0)
 
         self.button_create.SetToolTip(_("Create a grid with your values"))
-        self.button_queue.SetToolTip(
-            _(
-                "Plan the test pattern and add it to the Job Spooler. "
-                "Connect the laser first. Does not run the job — use Start in Job Spooler."
-            )
-        )
         s = _("Operation type for which the testpattern will be generated")
         s += "\n" + _(
             "You can define the common parameters for this operation in the other tabs on top of this window"
         )
         self.combo_ops.SetToolTip(s)
-        self.text_subtitle_x.SetToolTip(_("Choose the subtitle for the X axis"))
-        self.text_subtitle_y.SetToolTip(_("Choose the subtitle for the Y axis"))
         self.combo_param_1.SetToolTip(
             _("Choose the first parameter that you want to be tested")
         )
@@ -658,28 +580,16 @@ class TemplatePanel(wx.Panel):
         self.check_values.SetToolTip(
             _("Will create the corresponding values as labels at the sides of the grid")
         )
-        self.check_use_vector_labels.SetToolTip(_("Use vector shapes for labels"))
-        range_tooltip = _("Valid values between {min} and {max}").format(
-            min=self.MIN_PATTERN_SIZE, max=self.MAX_PATTERN_SIZE
-        )
-        gap_tooltip = _("Valid values between {min} and {max}").format(
-            min=self.MIN_GAP_SIZE, max=self.MAX_GAP_SIZE
-        )
         self.text_min_1.SetToolTip(_("Minimum value for 1st parameter"))
         self.text_max_1.SetToolTip(_("Maximum value for 1st parameter"))
         self.text_min_2.SetToolTip(_("Minimum value for 2nd parameter"))
         self.text_max_2.SetToolTip(_("Maximum value for 2nd parameter"))
-        self.text_dim_1.SetToolTip(_("Width of the to be created pattern") + "\n" + range_tooltip)
-        self.text_dim_2.SetToolTip(_("Height of the to be created pattern") + "\n" + range_tooltip)
-        self.text_delta_1.SetToolTip(_("Horizontal gap between patterns") + "\n" + gap_tooltip)
-        self.text_delta_2.SetToolTip(_("Vertical gap between patterns") + "\n" + gap_tooltip)
-
-        self.check_duplicate_shapes.SetToolTip(
-            _("Add the shape a second time around the effect")
-        )
+        self.text_dim_1.SetToolTip(_("Width of the to be created pattern"))
+        self.text_dim_2.SetToolTip(_("Height of the to be created pattern"))
+        self.text_delta_1.SetToolTip(_("Horizontal gap between patterns"))
+        self.text_delta_2.SetToolTip(_("Vertical gap between patterns"))
 
         self.button_create.Bind(wx.EVT_BUTTON, self.on_button_create_pattern)
-        self.button_queue.Bind(wx.EVT_BUTTON, self.on_button_queue_to_spooler)
         self.combo_ops.Bind(wx.EVT_COMBOBOX, self.set_param_according_to_op)
         self.text_min_1.Bind(wx.EVT_TEXT, self.validate_input)
         self.text_max_1.Bind(wx.EVT_TEXT, self.validate_input)
@@ -694,10 +604,8 @@ class TemplatePanel(wx.Panel):
         self.combo_images.Bind(wx.EVT_COMBOBOX, self.on_combo_image)
         self.spin_count_1.Bind(wx.EVT_SPINCTRL, self.validate_input)
         self.spin_count_2.Bind(wx.EVT_SPINCTRL, self.validate_input)
-
         self.Bind(wx.EVT_CHECKLISTBOX, self.validate_input, self.list_options_1)
         self.Bind(wx.EVT_CHECKLISTBOX, self.validate_input, self.list_options_2)
-        self.Bind(wx.EVT_CHECKBOX, self.on_check_labels, self.check_labels)
 
         self.SetSizer(sizer_main)
         self.Layout()
@@ -708,27 +616,28 @@ class TemplatePanel(wx.Panel):
 
     def prefill_defaults(self):
         def prefill_op(op):
-            if op is None:
+            if op is None or op.type not in op_parent_nodes:
                 return
             fields = {}
-            if op.type.startswith("effect "):
-                if hasattr(self.context.device, "get_effect_defaults"):
-                    fields.update(self.context.device.get_effect_defaults(op.type))
-            else:
-                if hasattr(self.context.device, "get_operation_defaults"):
-                    fields.update(self.context.device.get_operation_defaults(op.type))
-            for source, value in fields.items():
-                if hasattr(op, "settings"):
-                    op.settings[source] = value
-                elif hasattr(op, source):
-                    setattr(op, source, value)
-            if op.type in op_parent_nodes:
-                p = self.context.material_operation_power
-                if p is not None:
-                    op.settings["power"] = p
-                s = self.context.material_operation_speed
-                if s is not None:
-                    op.settings["speed"] = s
+            if "balor" in self.context.device.path:
+                fields = {
+                    "default_power": "power",
+                    "default_speed": "speed",
+                    "rapid_enabled": "",
+                    "rapid_speed": "",
+                    "timing_enabled": "",
+                    "delay_laser_on": "",
+                    "delay_laser_off": "",
+                    "delay_polygon": "",
+                    "pulse_width_enabled": "",
+                    "pulse_width": "",
+                }
+            for source, target in fields.items():
+                if target is None or target == "":
+                    target = source
+                if not hasattr(self.context.device, source):
+                    continue
+                op.settings[target] = getattr(self.context.device, source)
 
         for op in self.default_op:
             prefill_op(op)
@@ -746,11 +655,6 @@ class TemplatePanel(wx.Panel):
             else:
                 result = result[:-1]
         return result
-
-    def on_check_labels(self, event):
-        active = bool(self.check_labels.GetValue())
-        self.text_subtitle_x.Enable(active)
-        self.text_subtitle_y.Enable(active) 
 
     def on_combo_image(self, event):
         self.validate_input(event)
@@ -793,35 +697,9 @@ class TemplatePanel(wx.Panel):
         self.context.device.setting(bool, "use_percent_for_power_display", False)
         return self.context.device.use_percent_for_power_display
 
-    def cap_power_for_display(self, value):
-        """Laser power: 0–100% display (= 0–1000 internal). GRBL cannot exceed 100%."""
-        if not self.use_percent():
-            return value
-        try:
-            v = float(value)
-        except (TypeError, ValueError):
-            return value
-        return max(0.0, min(100.0, v))
-
     def use_mm_min(self):
         self.context.device.setting(bool, "use_mm_min_for_speed_display", False)
         return self.context.device.use_mm_min_for_speed_display
-
-    def select_operation_for_node(self, node):
-        """Match the Generator operation combo to a tree operation type."""
-        if node is None:
-            return
-        type_to_index = {
-            "op cut": 0,
-            "op engrave": 1,
-            "op raster": 2,
-            "op image": 3,
-            "op dots": 1,
-        }
-        idx = type_to_index.get(getattr(node, "type", None), -1)
-        if 0 <= idx < self.combo_ops.GetCount() and self.combo_ops.GetSelection() != idx:
-            self.combo_ops.SetSelection(idx)
-            self.set_param_according_to_op(None)
 
     def set_param_according_to_op(self, event):
         def preset_image_dpi(node=None):
@@ -887,11 +765,6 @@ class TemplatePanel(wx.Panel):
             self.combo_images.Show(self.use_image[opidx])
             self.text_dim_1.Enable(not self.use_image[opidx])
             self.text_dim_2.Enable(not self.use_image[opidx])
-        # print (f"Master vs Secondary: {type(opnode).__name__} vs {type(secondary_node).__name__}")
-        shape_option = secondary_node is not None and type(opnode) is not type(
-            secondary_node
-        )
-        self.check_duplicate_shapes.Show(shape_option)
 
         self.sizer_param_op.Layout()
         if self.callback is not None:
@@ -1294,23 +1167,6 @@ class TemplatePanel(wx.Panel):
         # self.on_combo_1(None)
         # self.on_combo_2(None)
 
-    def on_button_queue_to_spooler(self, event):
-        optimize = getattr(self.context.planner, "do_optimization", True)
-        if queue_cutplan_to_spooler(
-            self.context, optimize=optimize, hold_policy="never"
-        ):
-            prefer_threaded = self.context.setting(bool, "prefer_threaded_mode", True)
-            if prefer_threaded:
-                wx.MessageBox(
-                    _(
-                        "The job is being prepared in the background.\n\n"
-                        "Wait a few seconds, then open Job Spooler and press Start there "
-                        "(or Laser tab → Arm → Start)."
-                    ),
-                    _("Queue to Spooler"),
-                    wx.OK | wx.ICON_INFORMATION,
-                )
-
     def on_button_create_pattern(self, event):
         def make_color(idx1, max1, idx2, max2, aspect1, growing1, aspect2, growing2):
             if self._freecolor:
@@ -1365,20 +1221,14 @@ class TemplatePanel(wx.Panel):
                     return default
 
             count_1, count_2 = len(range1), len(range2)
-            dimension_1 = get_float(self.text_dim_1, 0)
-            dimension_2 = get_float(self.text_dim_2, 0)
-            if dimension_1 < self.MIN_PATTERN_SIZE or dimension_1 > self.MAX_PATTERN_SIZE:
-                dimension_1 = 5
-            if dimension_2 < self.MIN_PATTERN_SIZE or dimension_2 > self.MAX_PATTERN_SIZE:
-                dimension_2 = 5
+            dimension_1 = max(get_float(self.text_dim_1, -1), 5)
+            dimension_2 = max(get_float(self.text_dim_2, -1), 5)
             gap_1 = max(get_float(self.text_delta_1, -1), 0)
-            gap_2 = max(get_float(self.text_delta_2, -1), 0)
+            gap_2 = max(get_float(self.text_delta_2, -1), 5)
 
             # print (f"Creating operations for {len(range1)} x {len(range2)}")
             display_labels = self.check_labels.GetValue()
             display_values = self.check_values.GetValue()
-            use_line_labels = self.check_use_vector_labels.GetValue()
-            
             color_aspect_1 = max(0, self.combo_color_1.GetSelection())
             color_aspect_2 = max(0, self.combo_color_2.GetSelection())
             color_growing_1 = self.check_color_direction_1.GetValue()
@@ -1404,19 +1254,14 @@ class TemplatePanel(wx.Panel):
 
             text_scale_x = min(1.0, size_y / float(Length("20mm")))
             text_scale_y = min(1.0, size_x / float(Length("20mm")))
+
             # Make one op for text
             if display_labels or display_values:
                 for axis, label in zip(
                     ("X", "Y"), (self.DESC_X_AXIS, self.DESC_Y_AXIS)
                 ):
-                    if use_line_labels:
-                        op = EngraveOpNode()
-                        op.label = label 
-                        opcolor = "green"   
-                    else:
-                        op = RasterOpNode()
-                        opcolor = "black"
-                    op.color = Color(opcolor)
+                    op = RasterOpNode()
+                    op.color = Color("black")
                     op.label = label
                     op.speed = self.description_speed
                     op.power = self.description_power
@@ -1426,61 +1271,31 @@ class TemplatePanel(wx.Panel):
             if display_labels:
 
                 def add_axis_label(text, x, y, scale, op):
-                    if use_line_labels:
-                        fonts = self.context.fonts
-                        node = fonts.create_linetext_node(
-                            x,
-                            y,
-                            text,
-                            font=fonts.std_font_file,
-                            font_size=12 * scale,
-                            align="middle",
-                        )
-                        node.stroke = Color("green")
-                        node.stroke_width = 1000
-                        element_branch.add_node(node)
-                    else:
-                        node = element_branch.add(
-                            text=text,
-                            matrix=Matrix(f"translate({x}, {y}) scale({scale})"),
-                            anchor="middle",
-                            fill=Color("black"),
-                            type="elem text",
-                        )
-
+                    node = element_branch.add(
+                        text=text,
+                        matrix=Matrix(f"translate({x}, {y}) scale({scale})"),
+                        anchor="middle",
+                        fill=Color("black"),
+                        type="elem text",
+                    )
                     op.add_reference(node, 0)
                     return node
 
-                unit_str = f" [{param_unit_1}]" if param_unit_1 else ""
-                header = f"{param_name_1}{unit_str}"
-                linecount = 1
-                if self.text_subtitle_x.GetValue().strip():
-                    header += f"\n{self.text_subtitle_x.GetValue().strip()}"
-                    linecount += 1
                 text_x = start_x + expected_width / 2
-                # maintext gap label gap shape
-                text_y = start_y - (linecount + 1) * max(text_scale_x, text_scale_y) * float(
-                    Length("10mm")
-                )
+                text_y = start_y - min(float(Length("10mm")), 3 * gap_y)
+                unit_str = f" [{param_unit_1}]" if param_unit_1 else ""
                 add_axis_label(
-                    header,
+                    f"{param_name_1}{unit_str}",
                     text_x,
                     text_y,
                     2 * max(text_scale_x, text_scale_y) * UNITS_PER_PIXEL,
                     text_op_x,
                 )
-                unit_str = f" [{param_unit_2}]" if param_unit_2 else ""
-                header = f"{param_name_2}{unit_str}"
-                linecount = 1
-                if self.text_subtitle_y.GetValue().strip():
-                    header += f"\n{self.text_subtitle_y.GetValue().strip()}"
-                    linecount += 1
-                text_x = start_x - (linecount + 1) * max(text_scale_x, text_scale_y) * float(
-                    Length("10mm")
-                )
+                text_x = start_x - min(float(Length("10mm")), 3 * gap_x)
                 text_y = start_y + expected_height / 2
+                unit_str = f" [{param_unit_2}]" if param_unit_2 else ""
                 node = add_axis_label(
-                    header,
+                    f"{param_name_2}{unit_str}",
                     text_x,
                     text_y,
                     2 * max(text_scale_x, text_scale_y) * UNITS_PER_PIXEL,
@@ -1509,32 +1324,16 @@ class TemplatePanel(wx.Panel):
                 if display_values:
                     # Add a text above for each column
                     text_x = xx + 0.5 * size_x
-                    text_y = yy - 1.25 * max(text_scale_x, text_scale_y) * float(
-                        Length("5mm")
+                    text_y = yy - min(float(Length("5mm")), 1.5 * gap_y)
+                    node = element_branch.add(
+                        text=f"{pval1}",
+                        matrix=Matrix(
+                            f"translate({text_x}, {text_y}) scale({text_scale_x * UNITS_PER_PIXEL})"
+                        ),
+                        anchor="middle",
+                        fill=Color("black"),
+                        type="elem text",
                     )
-                    if use_line_labels:
-                        fonts = self.context.fonts
-                        node = fonts.create_linetext_node(
-                            text_x,
-                            text_y,
-                            f"{pval1}",
-                            font=fonts.std_font_file,
-                            font_size=16 * text_scale_x * UNITS_PER_PIXEL, # 2/3 of header-size which is 2*12
-                            align="middle",
-                        )
-                        node.stroke = Color("green")
-                        node.stroke_width = 1000
-                        element_branch.add_node(node)
-                    else:
-                        node = element_branch.add(
-                            text=f"{pval1}",
-                            matrix=Matrix(
-                                f"translate({text_x}, {text_y}) scale({text_scale_x * UNITS_PER_PIXEL})"
-                            ),
-                            anchor="middle",
-                            fill=Color("black"),
-                            type="elem text",
-                        )
                     # node.matrix.post_rotate(tau / 4, text_x, text_y)
                     node.modified()
                     text_op_x.add_reference(node, 0)
@@ -1555,33 +1354,17 @@ class TemplatePanel(wx.Panel):
                     s_lbl = f"{param_type_1}={pval1}{param_unit_1}"
                     s_lbl += f"- {param_type_2}={pval2}{param_unit_2}"
                     if display_values and idx1 == 0:  # first row, so add a text above
-                        text_x = xx - 1.25 * max(text_scale_x, text_scale_y) * float(
-                            Length("5mm")
-                        )
+                        text_x = xx - min(float(Length("5mm")), 1.5 * gap_x)
                         text_y = yy + 0.5 * size_y
-                        if use_line_labels:
-                            fonts = self.context.fonts
-                            node = fonts.create_linetext_node(
-                                text_x,
-                                text_y,
-                                f"{pval2}",
-                                font=fonts.std_font_file,
-                                font_size=16 * text_scale_y * UNITS_PER_PIXEL,  # 2/3 of header-size which is 2*12
-                                align="middle",
-                            )
-                            node.stroke = Color("green")
-                            node.stroke_width = 1000
-                            element_branch.add_node(node)
-                        else:
-                            node = element_branch.add(
-                                text=f"{pval2}",
-                                matrix=Matrix(
-                                    f"translate({text_x}, {text_y}) scale({text_scale_y * UNITS_PER_PIXEL})"
-                                ),
-                                anchor="middle",
-                                fill=Color("black"),
-                                type="elem text",
-                            )
+                        node = element_branch.add(
+                            text=f"{pval2}",
+                            matrix=Matrix(
+                                f"translate({text_x}, {text_y}) scale({text_scale_y * UNITS_PER_PIXEL})"
+                            ),
+                            anchor="middle",
+                            fill=Color("black"),
+                            type="elem text",
+                        )
                         node.matrix.post_rotate(tau * 3 / 4, text_x, text_y)
                         text_op_y.add_reference(node, 0)
 
@@ -1611,8 +1394,6 @@ class TemplatePanel(wx.Panel):
                         usefill = False
                     else:
                         return
-                    self.context.material_operation_power = master_op.power
-                    self.context.material_operation_speed = master_op.speed
                     this_op.label = s_lbl
 
                     def set_param(op, ptype, value, keep_unit, unit, prepper):
@@ -1620,10 +1401,7 @@ class TemplatePanel(wx.Panel):
                             prepper(op)
                         v = f"{value}{unit}" if keep_unit else value
                         if ptype == "power" and self.use_percent():
-                            if keep_unit:
-                                pass
-                            else:
-                                v = float(self.cap_power_for_display(v)) * 10.0
+                            v = v if keep_unit else float(v) * 10.0
                         if ptype == "speed" and self.use_mm_min():
                             v = v if keep_unit else float(v) / 60.0
                         if hasattr(op, ptype):
@@ -1718,17 +1496,8 @@ class TemplatePanel(wx.Panel):
                     if elemnode is not None:
                         elemnode.label = s_lbl
                         this_op.add_reference(elemnode, 0)
-                        if duplicate_shapes:
-                            master_op.add_reference(elemnode, ignore_effect=True)
-
-                    yy += gap_y + size_y
-                xx += gap_x + size_x
-
-        # Do we need to check for duplicate shapes?
-        duplicate_shapes = (
-            self.check_duplicate_shapes.IsShown()
-            and self.check_duplicate_shapes.GetValue()
-        )
+                    yy = yy + gap_y + size_y
+                xx = xx + gap_x + size_x
 
         # Remember any changes made by the user to the description operations
         self.check_raster_description_parameters()
@@ -1801,15 +1570,9 @@ class TemplatePanel(wx.Panel):
                 if param_unit == "deg":
                     min_value = float(text_min)
                     max_value = float(text_max)
-                elif param_unit in ("ppi", "%"):
+                elif param_unit == "ppi":
                     min_value = max(min_value, 0)
-                    if (
-                        self.parameters[idx][0] == "power"
-                        and self.use_percent()
-                    ):
-                        max_value = min(max_value, 100)
-                    else:
-                        max_value = min(max_value, 1000)
+                    max_value = min(max_value, 1000)
                 elif param_unit == "%":
                     min_value = max(min_value, 0)
                     max_value = min(max_value, 100)
@@ -1858,7 +1621,6 @@ class TemplatePanel(wx.Panel):
         self.context.signal("rebuild_tree")
         self.context.signal("refresh_scene", "Scene")
         self.save_settings()
-        self.button_queue.Enable(self.context.elements.have_burnable_elements())
 
     def setup_settings(self):
         self.context.setting(int, "template_optype", 0)
@@ -1876,15 +1638,12 @@ class TemplatePanel(wx.Panel):
         self.context.setting(str, "template_gap_2", "5")
         self.context.setting(bool, "template_show_labels", True)
         self.context.setting(bool, "template_show_values", True)
-        self.context.setting(bool, "template_simple_labels", True)
         self.context.setting(int, "template_color1", 0)
         self.context.setting(int, "template_color2", 2)
         self.context.setting(bool, "template_coldir1", False)
         self.context.setting(bool, "template_coldir2", False)
         self.context.setting(str, "template_list1", "")
         self.context.setting(str, "template_list2", "")
-        self.context.setting(str, "template_subtitle_x", "")
-        self.context.setting(str, "template_subtitle_y", "")
 
     def _set_settings(self, templatename):
         info_field = (
@@ -1909,9 +1668,6 @@ class TemplatePanel(wx.Panel):
             self.context.template_coldir2,
             self.context.template_list1,
             self.context.template_list2,
-            self.context.template_simple_labels,
-            self.context.template_subtitle_x,
-            self.context.template_subtitle_y,   
         )
         # print (f"Save data to {templatename}, infofield-len={len(info_field)}")
         key = f"{templatename}"
@@ -1955,14 +1711,10 @@ class TemplatePanel(wx.Panel):
             self.context.template_coldir2 = info_field[18]
             self.context.template_list1 = get_setting(19, "")
             self.context.template_list2 = get_setting(20, "")
-            self.context.template_simple_labels = get_setting(21, True)
-            self.context.template_subtitle_x = get_setting(22, "")
-            self.context.template_subtitle_y = get_setting(23, "")
 
     def save_settings(self, templatename=None):
         self.context.template_show_values = self.check_values.GetValue()
         self.context.template_show_labels = self.check_labels.GetValue()
-        self.context.template_simple_labels = self.check_use_vector_labels.GetValue()
         self.context.template_optype = self.combo_ops.GetSelection()
         self.context.template_param1 = self.combo_param_1.GetSelection()
         self.context.template_param2 = self.combo_param_2.GetSelection()
@@ -1982,8 +1734,6 @@ class TemplatePanel(wx.Panel):
         self.context.template_coldir2 = self.check_color_direction_2.GetValue()
         self.context.template_list1 = "|".join(self.list_options_1.GetCheckedStrings())
         self.context.template_list2 = "|".join(self.list_options_2.GetCheckedStrings())
-        self.context.template_subtitle_x = self.text_subtitle_x.GetValue()
-        self.context.template_subtitle_y = self.text_subtitle_y.GetValue()
         if templatename:
             # let's try to restore the settings
             self._set_settings(templatename)
@@ -2003,11 +1753,6 @@ class TemplatePanel(wx.Panel):
             )
             self.check_values.SetValue(self.context.template_show_values)
             self.check_labels.SetValue(self.context.template_show_labels)
-            self.text_subtitle_x.SetValue(self.context.template_subtitle_x)
-            self.text_subtitle_y.SetValue(self.context.template_subtitle_y)
-            self.text_subtitle_x.Enable(self.context.template_show_labels)
-            self.text_subtitle_y.Enable(self.context.template_show_labels)
-            self.check_use_vector_labels.SetValue(self.context.template_simple_labels)
             self.combo_ops.SetSelection(
                 min(self.context.template_optype, self.combo_ops.GetCount() - 1)
             )
@@ -2099,13 +1844,11 @@ class TemplateTool(MWindow):
         self.notebook_main.GetArtProvider().SetColour(bg_std)
         self.notebook_main.GetArtProvider().SetActiveColour(bg_active)
         self.sizer.Add(self.notebook_main, 1, wx.EXPAND, 0)
-        self.panel_template.Reparent(self.notebook_main)
         self.notebook_main.AddPage(self.panel_template, _("Generator"))
 
         self.panel_template.set_callback(self.set_node)
         self.add_module_delegate(self.panel_template)
 
-        self.panel_saveload.Reparent(self.notebook_main)
         self.notebook_main.AddPage(self.panel_saveload, _("Templates"))
         self.panel_saveload.set_callback(self.callback_templates)
         self.add_module_delegate(self.panel_saveload)
@@ -2141,7 +1884,7 @@ class TemplateTool(MWindow):
 
         return None
 
-    def set_node(self, primary_node, secondary_node=None, focus_properties=False):
+    def set_node(self, primary_node, secondary_node=None):
         def sort_priority(prop):
             prop_sheet, node = prop
             return (
@@ -2234,10 +1977,8 @@ class TemplateTool(MWindow):
 
         self.Layout()
         self.Thaw()
-        if focus_properties and self.notebook_main.GetPageCount() > 1:
-            self.notebook_main.SetSelection(1)
-        else:
-            self.notebook_main.SetSelection(0)
+        self.notebook_main.SetSelection(1)
+        self.notebook_main.SetSelection(0)
         del busy
 
     def window_open(self):

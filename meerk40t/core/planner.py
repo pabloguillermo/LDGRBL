@@ -1,6 +1,4 @@
-import threading
 from copy import copy
-from time import time
 
 from meerk40t.kernel import Service
 
@@ -23,17 +21,79 @@ The planner module provides cut planning services. This provides a method of goi
 cutcode which is then put inside a laserjob and sent to a spooler. Most of these operations are called on the
 individual CutPlan objects.
 """
-STAGE_PLAN_INIT = 0
-STAGE_PLAN_CLEAR = 2
-STAGE_PLAN_COPY = 1
-STAGE_PLAN_VALIDATED = 3
-STAGE_PLAN_GEOMETRY = 4
-STAGE_PLAN_PREPROCESSED = 5
-STAGE_PLAN_PREOPTIMIZED = 6
-STAGE_PLAN_OPTIMIZED = 7
-STAGE_PLAN_BLOB = 8
-STAGE_PLAN_FINISHED = 99
-STAGE_PLAN_INFO = 150
+
+
+# Where the job is placed when it is sent to the laser (LightBurn "Start From")
+START_FROM_ABSOLUTE = 0
+START_FROM_USER_ORIGIN = 1
+START_FROM_CURRENT_POSITION = 2
+
+
+def job_origin_anchor(bounds, index):
+    """
+    Return the point of the bounds that serves as job origin.
+    index is a 3x3 grid position in reading order:
+    0=top-left, 1=top-center, 2=top-right, ... 4=center ... 8=bottom-right
+    """
+    index = min(8, max(0, int(index)))
+    col = index % 3
+    row = index // 3
+    x = bounds[0] + (bounds[2] - bounds[0]) * col / 2
+    y = bounds[1] + (bounds[3] - bounds[1]) * row / 2
+    return x, y
+
+
+def union_bounds(bounds_list):
+    result = None
+    for b in bounds_list:
+        if b is None:
+            continue
+        if result is None:
+            result = list(b)
+        else:
+            result[0] = min(result[0], b[0])
+            result[1] = min(result[1], b[1])
+            result[2] = max(result[2], b[2])
+            result[3] = max(result[3], b[3])
+    return result
+
+
+def operations_bounds(operations, require_output=True):
+    """
+    Bounds of all elements contained in the given operations.
+    """
+    bounds = []
+    for op in operations:
+        if not hasattr(op, "type") or op.type is None:
+            continue
+        if not op.type.startswith("op "):
+            continue
+        if require_output and not getattr(op, "output", True):
+            continue
+        for child in op.children:
+            node = child.node if child.type == "reference" else child
+            try:
+                bounds.append(node.bounds)
+            except AttributeError:
+                pass
+    return union_bounds(bounds)
+
+
+def shift_node(node, dx, dy):
+    """
+    Translate a (detached) node and its children by dx, dy.
+    """
+    for child in node.children:
+        shift_node(child, dx, dy)
+    if getattr(node, "_convex_hull", None) is not None:
+        # Copies share the hull object with the scene element, so let it be rebuilt
+        node._convex_hull = None
+    try:
+        node.matrix.post_translate(dx, dy)
+    except AttributeError:
+        node.set_dirty_bounds()
+        return
+    node.translated(dx, dy)
 
 
 def plugin(kernel, lifecycle=None):
@@ -57,8 +117,7 @@ def plugin(kernel, lifecycle=None):
         ]
         kernel.register_choices("planner", choices)
         INNER_WARNING = _(
-            "Notabene: When using both Reduce Travel Time and Burn Inner First, "
-            "travel optimization occurs within each hierarchy level (inners before outers)."
+            "Notabene: Reduce Travel Time and Burn Inner First cannot be used at the same time."
         )
         choices = [
             {
@@ -394,7 +453,15 @@ def plugin(kernel, lifecycle=None):
         kernel.register_choices("optimize", choices)
         context.setting(bool, "opt_2opt", False)
         context.setting(bool, "opt_nearest_neighbor", True)
+        context.setting(bool, "opt_reduce_directions", False)
+        context.setting(bool, "opt_remove_overlap", False)
         context.setting(bool, "opt_start_from_position", False)
+
+        root = kernel.root
+        root.setting(int, "job_start_from", START_FROM_ABSOLUTE)
+        root.setting(int, "job_origin", 0)
+        root.setting(bool, "job_cut_selected", False)
+        root.setting(bool, "job_use_selection_origin", False)
 
         # context.setting(int, "opt_closed_distance", 15)
         # context.setting(bool, "opt_merge_passes", False)
@@ -415,123 +482,147 @@ def plugin(kernel, lifecycle=None):
 
 class Planner(Service):
     """
-    Planner is a service that manages cut planning and job creation for the kernel.
-    It provides thread-safe access to cut plans, tracks plan states and stages, and exposes
-    a set of console commands for manipulating plans, operations, and job execution.
-    Plans are tracked with multiple stages (init, copy, preprocess, optimize, etc.),
-    and the planner ensures that plan creation and modification are safe for concurrent use.
+    Planner is a service that adds 'plan' commands to the kernel. These are text based versions of the job preview and
+    should be permitted to control the job creation process.
     """
 
-    STAGE_DESCRIPTIONS = {
-        STAGE_PLAN_INIT: "Init",
-        STAGE_PLAN_CLEAR: "Clear",
-        STAGE_PLAN_COPY: "Copy",
-        STAGE_PLAN_PREPROCESSED: "Pre-Proc",
-        STAGE_PLAN_PREOPTIMIZED: "Pre-Opt",
-        STAGE_PLAN_OPTIMIZED: "Opt",
-        STAGE_PLAN_INFO: "Info",
-        STAGE_PLAN_VALIDATED: "Valid",
-        STAGE_PLAN_GEOMETRY: "Geom",
-        STAGE_PLAN_BLOB: "Blob",
-        STAGE_PLAN_FINISHED: "Done",
-    }
-
     def __init__(self, kernel, *args, **kwargs):
-        """
-        Initialize the Planner service.
-        Sets up plan and state tracking, default plan, and thread lock for safe concurrent access.
-        """
         Service.__init__(self, kernel, "planner")
-        self._plan = {}  # contains all cutplans, keyed by plan name
-        self._states = {}  # contains all plan state dictionaries, keyed by plan name
+        self._plan = dict()
         self._default_plan = "0"
-        # self.do_optimization = True
-        self._plan_lock = threading.Lock()
+        self.do_optimization = True
 
-    @property
-    def do_optimization(self):
-        """
-        Get the optimization flag.
-        """
-        value = self.kernel.root.setting(bool, "do_optimization", True)
-        return value
-
-    @do_optimization.setter
-    def do_optimization(self, value):
-        """
-        Set the optimization flag.
-        """
-        self.kernel.root.setting(bool, "do_optimization", value)
-        self.kernel.root.do_optimization = value
-    
     def length(self, v):
-        """
-        Convert a value to a float using the Length class (device-indepen
-        dent units).
-        """
         return float(Length(v))
 
     def length_x(self, v):
-        """
-        Convert a value to a float relative to the device's view width.
-        """
         return float(Length(v, relative_length=self.device.view.width))
 
     def length_y(self, v):
-        """
-        Convert a value to a float relative to the device's view height.
-        """
         return float(Length(v, relative_length=self.device.view.height))
 
-    def __get_or_make_plan(self, plan_name):
+    def get_or_make_plan(self, plan_name):
         """
-        Internal helper to get an existing plan by name, or create a new one if it does not exist.
-        Initializes the plan's state tracking as well. Thread safety must be handled by the caller.
+        Plans are a tuple of 3 lists and the name. Plan, Original, Commands, and Plan-Name
         """
         try:
             return self._plan[plan_name]
         except KeyError:
             self._plan[plan_name] = CutPlan(plan_name, self)
-            self._states[plan_name] = {STAGE_PLAN_INIT: time()}
-        return self._plan[plan_name]
-
-    def get_or_make_plan(self, plan_name):
-        """
-        Thread-safe method to get or create a plan by name.
-        Returns the CutPlan instance for the given plan name.
-        """
-        with self._plan_lock:
-            plan = self.__get_or_make_plan(plan_name)
-        return plan
+            return self._plan[plan_name]
 
     @property
     def default_plan(self):
-        """
-        Returns the default plan (usually plan '0').
-        """
         return self.get_or_make_plan(self._default_plan)
+
+    # ----------------------------------------------------------------
+    # Job placement (LightBurn-like "Start From" / "Job Origin")
+    # ----------------------------------------------------------------
+
+    def get_user_origin(self):
+        """
+        The user origin of the active device in scene units, or None if unset.
+        """
+        device = getattr(self, "device", None)
+        if device is None:
+            return None
+        x = device.setting(float, "user_origin_x", None)
+        y = device.setting(float, "user_origin_y", None)
+        if x is None or y is None:
+            return None
+        return x, y
+
+    def set_user_origin(self, value):
+        """
+        Set (or clear with None) the user origin of the active device.
+        """
+        device = getattr(self, "device", None)
+        if device is None:
+            return
+        device.setting(float, "user_origin_x", None)
+        device.setting(float, "user_origin_y", None)
+        if value is None:
+            device.user_origin_x = None
+            device.user_origin_y = None
+        else:
+            device.user_origin_x = float(value[0])
+            device.user_origin_y = float(value[1])
+        self.signal("user_origin", value)
+
+    def job_target(self):
+        """
+        Where the job origin should be placed, in scene units.
+        Returns None for absolute placement (or if the target is unknown).
+        """
+        mode = self.kernel.root.setting(int, "job_start_from", START_FROM_ABSOLUTE)
+        if mode == START_FROM_USER_ORIGIN:
+            return self.get_user_origin()
+        if mode == START_FROM_CURRENT_POSITION:
+            try:
+                return self.device.current
+            except AttributeError:
+                return None
+        return None
+
+    def job_bounds(self, plan_operations=None):
+        """
+        Bounds that are used to establish the job origin.
+        plan_operations: the operations of a plan, if that's already available.
+        """
+        root = self.kernel.root
+        selected_only = root.setting(bool, "job_cut_selected", False)
+        use_selection = root.setting(bool, "job_use_selection_origin", False)
+        if selected_only and not use_selection:
+            # The origin is established by the whole job, not the selection.
+            return operations_bounds(self.elements.ops())
+        if plan_operations is not None:
+            return operations_bounds(plan_operations, require_output=False)
+        if selected_only:
+            return union_bounds(
+                node.bounds
+                for node in self.elements.elems(emphasized=True)
+                if node.bounds is not None
+            )
+        return operations_bounds(self.elements.ops())
+
+    def job_offset(self, plan_operations=None, bounds=None):
+        """
+        Offset that needs to be applied to the job to place it according to the
+        Start From / Job Origin settings, or None if no offset needs to be applied.
+        """
+        target = self.job_target()
+        if target is None:
+            return None
+        if bounds is None:
+            bounds = self.job_bounds(plan_operations)
+        if bounds is None:
+            return None
+        index = self.kernel.root.setting(int, "job_origin", 0)
+        anchor = job_origin_anchor(bounds, index)
+        dx = target[0] - anchor[0]
+        dy = target[1] - anchor[1]
+        if dx == 0 and dy == 0:
+            return None
+        return dx, dy
+
+    def job_plan_command(self, plan_name, optimize=True, final="spool"):
+        """
+        Console command to build (and spool / finish) a plan honoring the job settings.
+        """
+        copy_cmd = "copy"
+        if self.kernel.root.setting(bool, "job_cut_selected", False):
+            copy_cmd = "copy --emphasized"
+        steps = f"clear {copy_cmd} origin preprocess validate blob"
+        if optimize:
+            steps += " preopt optimize"
+        return f"plan{plan_name} {steps} {final}\n"
 
     def service_attach(self, *args, **kwargs):
         _ = self.kernel.translation
 
         @self.console_command(
-            "list-plans",
-            help=_("List all available plans"),
-            input_type=None,
-            output_type=None,
-        )
-        def list_plans(command, channel, _, **kwgs):
-            if not self._plan:
-                channel(_("No plans available."))
-                return
-            channel(_("Available plans:"))
-            for i, plan in enumerate(self._plan):
-                stage, info = self.get_plan_stage(plan)
-                channel(f"{i + 1}: {plan} (State: {info})")
-
-        @self.console_command(
             "plan",
-            help="plan<?> <command> : " + _("issue a command to modify the plan"),
+            help=_("plan<?> <command>"),
             regex=True,
             input_type=(None, "ops"),
             output_type="plan",
@@ -539,6 +630,7 @@ class Planner(Service):
         def plan_base(command, channel, _, data=None, remainder=None, **kwgs):
             if len(command) > 4:
                 self._default_plan = command[4:]
+                self.signal("plan", self._default_plan, None)
 
             cutplan = self.default_plan
             if data is not None:
@@ -557,40 +649,40 @@ class Planner(Service):
                     except AttributeError:
                         pass
                     cutplan.plan.append(copy_c)
+                self.signal("plan", self._default_plan, 1)
                 return "plan", cutplan
             if remainder is None:
                 channel(_("----------"))
-                channel(_("Plan:") + self._default_plan)
-                if isinstance(cutplan.name, str):
-                    channel(f"{1}: {cutplan.name}")
-                else:
-                    for i, plan_name in enumerate(cutplan.name):
-                        channel(f"{i + 1}: {plan_name}")
+                channel(_("Plan:"))
+                for i, plan_name in enumerate(cutplan.name):
+                    channel(f"{i}: {plan_name}")
                 channel(_("----------"))
-                state, info = self.get_plan_stage(self._default_plan)
-                channel(
-                    _("Plan {plan}: {state}").format(
-                        plan=self._default_plan, state=info
-                    )
-                )
+                channel(_("Plan {plan}:").format(plan=self._default_plan))
                 for i, op_name in enumerate(cutplan.plan):
-                    channel(f"{i + 1}: {op_name}")
+                    channel(f"{i}: {op_name}")
                 channel(_("Commands {plan}:").format(plan=self._default_plan))
                 for i, cmd_name in enumerate(cutplan.commands):
-                    channel(f"{i + 1}: {cmd_name}")
+                    channel(f"{i}: {cmd_name}")
                 channel(_("----------"))
 
             return "plan", cutplan
 
+        @self.console_option(
+            "emphasized",
+            "e",
+            type=bool,
+            action="store_true",
+            help=_("only copy the elements that are selected on the scene"),
+        )
         @self.console_command(
             ("copy", "copy-selected"),
-            help=_(
-                "plan<?> copy / copy-selected: copy data from all / only from selected operations"
-            ),
+            help=_("plan(-selected)<?> copy"),
             input_type="plan",
             output_type="plan",
         )
-        def plan_copy(command, channel, _, data_type=None, data=None, **kwgs):
+        def plan_copy(
+            command, channel, _, data_type=None, data=None, emphasized=False, **kwgs
+        ):
             # Update Info-panel if displayed
             busy = self.kernel.busyinfo
             if busy.shown:
@@ -715,9 +807,6 @@ class Planner(Service):
             init_settings()
 
             # Add default start ops
-            if busy.shown:
-                busy.change(msg=_("Adding trailing operations"), keep=1)
-                busy.show()
             add_ops(True)
             # types = (
             #     "op cut",
@@ -735,16 +824,7 @@ class Planner(Service):
             #     "place point"
             #     "blob",
             # )
-            c_count = 0
-            update_interval = 10  # Update busy indicator every 10 commands
             for c in operations:
-                c_count += 1
-                if busy.shown and (c_count % update_interval) == 0:
-                    busy.change(
-                        msg=_("Copying data {count}").format(count=c_count), keep=2
-                    )
-                    busy.show()
-
                 isactive = True
                 try:
                     if not c.output:
@@ -768,20 +848,55 @@ class Planner(Service):
 
                 # Make copy of node.
                 copy_c = copy(c)
-                try:
-                    # Make copy of real (non-referenced) children if that is permitted.
-                    copy_c.copy_children_as_real(c)
-                except AttributeError:
-                    pass
+                if emphasized and c.type.startswith("op "):
+                    # Only the elements that are selected on the scene
+                    for child in c.children:
+                        node = child.node if child.type == "reference" else child
+                        if not getattr(node, "emphasized", False):
+                            continue
+                        copy_child = copy(node)
+                        copy_c.add_node(copy_child)
+                        copy_child.copy_children_as_real(node)
+                    if len(copy_c.children) == 0:
+                        continue
+                else:
+                    try:
+                        # Make copy of real (non-referenced) children if that is permitted.
+                        copy_c.copy_children_as_real(c)
+                    except AttributeError:
+                        pass
                 data.plan.append(copy_c)
 
             # Add default trailing ops
-            if busy.shown:
-                busy.change(msg=_("Adding trailing operations"), keep=1)
-                busy.show()
             add_ops(False)
             channel(_("Copied Operations."))
-            self.update_stage(data.name, STAGE_PLAN_COPY)
+            self.signal("plan", data.name, 1)
+            return data_type, data
+
+        @self.console_command(
+            "origin",
+            help="plan<?> origin : "
+            + _("place the job according to the Start From / Job Origin settings"),
+            input_type="plan",
+            output_type="plan",
+        )
+        def plan_origin(command, channel, _, data_type=None, data=None, **kwgs):
+            offset = self.job_offset(data.plan)
+            if offset is None:
+                return data_type, data
+            dx, dy = offset
+            for c in data.plan:
+                if hasattr(c, "type") and c.type is not None and c.type.startswith("op "):
+                    for child in c.children:
+                        shift_node(child, dx, dy)
+                    c.set_dirty_bounds()
+            channel(
+                _("Job moved by {dx}, {dy}").format(
+                    dx=Length(amount=dx, digits=2).length_mm,
+                    dy=Length(amount=dy, digits=2).length_mm,
+                )
+            )
+            self.signal("plan", data.name, 1)
             return data_type, data
 
         @self.console_option(
@@ -790,7 +905,7 @@ class Planner(Service):
         @self.console_argument("console", type=str, help=_("console command to append"))
         @self.console_command(
             "console",
-            help="plan<?> command : " + _("inject a console command into the plan"),
+            help=_("plan<?> command"),
             input_type="plan",
             output_type="plan",
             all_arguments_required=True,
@@ -820,12 +935,12 @@ class Planner(Service):
                         data.plan.insert(index, cmd)
                     except ValueError:
                         channel(_("Invalid index for command insert."))
-                self.update_stage(data.name, STAGE_PLAN_INFO)
+                self.signal("plan", data.name, None)
             return data_type, data
 
         @self.console_command(
             "preprocess",
-            help="plan<?> preprocess : " + _("prepare the plan for execution"),
+            help=_("plan<?> preprocess"),
             input_type="plan",
             output_type="plan",
         )
@@ -835,27 +950,14 @@ class Planner(Service):
             if busy.shown:
                 busy.change(msg=_("Preprocessing"), keep=1)
                 busy.show()
-            anykerf = False
-            method = ""
-            for operation in data.plan:
-                if isinstance(operation, CutOpNode):
-                    kerf = getattr(operation, "kerf", None)
-                    if kerf is not None and kerf != 0:
-                        anykerf = True
-                        method = self.kernel.get_capability("offset_routine")
-                        if method is None:
-                            method = "unknown"
-                        break
-            if anykerf and channel:
-                channel(f"Kerf requirement detected, will adjust with {method}.")
 
             data.preprocess()
-            self.update_stage(data.name, STAGE_PLAN_PREPROCESSED)
+            self.signal("plan", data.name, 2)
             return data_type, data
 
         @self.console_command(
             "validate",
-            help="plan<?> validate : " + _("validate the plan for execution"),
+            help=_("plan<?> validate"),
             input_type="plan",
             output_type="plan",
         )
@@ -872,12 +974,12 @@ class Planner(Service):
                 self.signal("cutplanning;failed", str(e))
                 data.clear()
                 return
-            self.update_stage(data.name, STAGE_PLAN_VALIDATED)
+            self.signal("plan", data.name, 3)
             return data_type, data
 
         @self.console_command(
             "geometry",
-            help="plan<?> geometry : " + _("extract the geometry from the plan"),
+            help=_("plan<?> geometry"),
             input_type="plan",
             output_type="plan",
         )
@@ -889,12 +991,12 @@ class Planner(Service):
                 busy.show()
 
             data.geometry()
-            self.update_stage(data.name, STAGE_PLAN_GEOMETRY)
+            self.signal("plan", data.name, 4)
             return data_type, data
 
         @self.console_command(
             "blob",
-            help="plan<?> blob : " + _("create the device specific format to send to the laser"),
+            help=_("plan<?> blob"),
             input_type="plan",
             output_type="plan",
         )
@@ -906,12 +1008,12 @@ class Planner(Service):
                 busy.show()
 
             data.blob()
-            self.update_stage(data.name, STAGE_PLAN_BLOB)
+            self.signal("plan", data.name, 4)
             return data_type, data
 
         @self.console_command(
             "preopt",
-            help="plan<?> preopt : " + _("prepare the plan for optimisation"),
+            help=_("plan<?> preopt"),
             input_type="plan",
             output_type="plan",
         )
@@ -923,12 +1025,12 @@ class Planner(Service):
                 busy.show()
 
             data.preopt()
-            self.update_stage(data.name, STAGE_PLAN_PREOPTIMIZED)
+            self.signal("plan", data.name, 5)
             return data_type, data
 
         @self.console_command(
             "optimize",
-            help="plan<?> optimize : " + _("optimize the plan for execution, eg travel reduction"),
+            help=_("plan<?> optimize"),
             input_type="plan",
             output_type="plan",
         )
@@ -940,12 +1042,12 @@ class Planner(Service):
                 busy.show()
 
             data.execute()
-            self.update_stage(data.name, STAGE_PLAN_OPTIMIZED)
+            self.signal("plan", data.name, 6)
             return data_type, data
 
         @self.console_command(
             "clear",
-            help="plan<?> clear : " + _("clear the plan"),
+            help=_("plan<?> clear"),
             input_type="plan",
             output_type="plan",
         )
@@ -957,47 +1059,36 @@ class Planner(Service):
                 busy.show()
 
             data.clear()
-            self.update_stage(data.name, STAGE_PLAN_CLEAR)
-            return data_type, data
-
-        @self.console_command(
-            "finish",
-            help="plan<?> finish : " + _("deem the plan to be finished"),
-            input_type="plan",
-            output_type="plan",
-        )
-        def plan_finish(data_type=None, data=None, **kwgs):
-            # Update Info-panel if displayed
-            self.update_stage(data.name, STAGE_PLAN_FINISHED)
+            self.signal("plan", data.name, 0)
             return data_type, data
 
         @self.console_command(
             "return",
-            help="plan<?> return : " + _("extract the operations from the plan back to the tree"),
+            help=_("plan<?> return"),
             input_type="plan",
             output_type="plan",
         )
         def plan_return(command, channel, _, data_type=None, data=None, **kwgs):
             operations = self.elements.get(type="branch ops")
-            with self.elements.node_lock:
-                operations.remove_all_children()
-                for c in data.plan:
-                    if isinstance(c, CutCode):
-                        operations.add(type="cutcode", cutcode=c)
-                    if isinstance(
-                        c,
-                        (
-                            RasterOpNode,
-                            ImageOpNode,
-                            CutOpNode,
-                            EngraveOpNode,
-                            DotsOpNode,
-                        ),
-                    ):
-                        copy_c = copy(c)
-                        operations.add_node(copy_c)
+            operations.remove_all_children()
+
+            for c in data.plan:
+                if isinstance(c, CutCode):
+                    operations.add(type="cutcode", cutcode=c)
+                if isinstance(
+                    c,
+                    (
+                        RasterOpNode,
+                        ImageOpNode,
+                        CutOpNode,
+                        EngraveOpNode,
+                        DotsOpNode,
+                    ),
+                ):
+                    copy_c = copy(c)
+                    operations.add_node(copy_c)
             channel(_("Returned Operations."))
-            self.update_stage(data.name, STAGE_PLAN_INFO)
+            self.signal("plan", data.name, None)
             return data_type, data
 
         @self.console_argument(
@@ -1008,7 +1099,7 @@ class Planner(Service):
         )
         @self.console_command(
             "sublist",
-            help="plan<?> sublist : " + _("extract a sublist from the plan"),
+            help=_("plan<?> sublist"),
             input_type="plan",
             output_type="plan",
         )
@@ -1060,99 +1151,8 @@ class Planner(Service):
                     c = CutCode(c[: end - pos])
                 data.plan.append(c)
 
-            self.update_stage(data.name, STAGE_PLAN_INFO)
+            self.signal("plan", data.name, None)
             return data_type, data
 
     def plan(self, **kwargs):
         yield from self._plan
-
-    def finish_plan(self, plan_name):
-        self.update_stage(plan_name, STAGE_PLAN_FINISHED)
-
-    def has_content(self, plan_name):
-        """
-        Checks if the specified plan has any content (i.e., non-empty plan list).
-        Returns True if the plan exists and contains at least one operation.
-        """
-        if plan_name not in self._plan:
-            return False
-        return len(self._plan[plan_name].plan) > 0
-
-    def get_last_plan(self):
-        """
-        Finds and returns the most recently finished plan name that has content.
-        Returns the plan name, or None if no such plan exists.
-        """
-        last = None
-        last_time = 0
-        with self._plan_lock:
-            for candidate in self._plan:
-                plan = self._plan[candidate]
-                if (
-                    STAGE_PLAN_FINISHED not in self._states[candidate]
-                    or len(plan.plan) == 0
-                ):
-                    continue
-                # Make sure we take the most recent
-                t = self._states[candidate].get(STAGE_PLAN_FINISHED, 0)
-                if t > last_time:
-                    last_time = t
-                    last = candidate
-        return last
-
-    def get_free_plan(self):
-        """
-        Finds and returns a unique plan name not currently in use or a finished plan that can be reused.
-        This method generates a new plan name by incrementing a counter until an unused or finished name is found.
-        Returns the new unique plan name as a string.
-        """
-        candidate = "z"
-        index = 1
-        with self._plan_lock:
-            while True:
-                if candidate not in self._plan:
-                    plan = self.__get_or_make_plan(candidate)
-                    break
-                # We take this if we finished the plan
-                if STAGE_PLAN_FINISHED in self._states[candidate]:
-                    break
-                candidate = f"z{index}"
-                index += 1
-        return candidate
-
-    def update_stage(self, plan_name, stage):
-        """
-        Updates the stage of a plan, recording the current time for the given stage.
-        If clearing, resets all other stages. Otherwise, adds the new stage to the plan's state dictionary.
-        Emits a 'plan' signal with the plan name and stage.
-        """
-        if plan_name not in self._states:
-            self.console(f"Couldn't update plan {plan_name}: not found")
-            return
-        with self._plan_lock:
-            if stage == STAGE_PLAN_CLEAR:
-                self._states[plan_name].clear()
-            self._states[plan_name][stage] = time()
-        self.signal("plan", plan_name, stage)
-
-    def get_plan_stage(self, plan_name):
-        """
-        Returns the current state dictionary and a comma-separated string of all reached stage descriptions for a plan (ordered desc)
-        """
-        states = self._states.get(plan_name, {})
-        if not states:
-            return None, ""
-        ordered = sorted(states.items(), key=lambda kv: kv[1], reverse=True)
-        info = ", ".join(self.STAGE_DESCRIPTIONS[s] for s, _ in ordered)
-        return states, info
-
-    def is_finished(self, plan_name):
-        """
-        Checks if the specified plan has reached the finished stage.
-        Returns True if the plan exists and has the STAGE_PLAN_FINISHED recorded.
-        """
-        if plan_name not in self._states:
-            return False
-        with self._plan_lock:
-            finished = STAGE_PLAN_FINISHED in self._states[plan_name]
-        return finished

@@ -36,10 +36,9 @@ from meerk40t.gui.wxutils import (
     wxStaticBitmap,
     wxStaticText,
     wxToggleButton,
-    dispatch_to_main_thread,
 )
-from meerk40t.kernel.kernel import signal_listener
 from meerk40t.svgelements import Color
+from meerk40t.kernel.kernel import signal_listener
 
 _ = wx.GetTranslation
 
@@ -175,23 +174,6 @@ def register_panel_plotter(window, context):
     pane.helptext = _("Raster plotter test")
     window.on_pane_create(pane)
     context.register("pane/debug_plotter", pane)
-
-    pane = (
-        aui.AuiPaneInfo()
-        .Float()
-        .MinSize(225, 110)
-        .FloatingSize(400, 400)
-        .Caption(_("Op Settings"))
-        .CaptionVisible(not context.pane_lock)
-        .Name("debug_settings")
-        .Hide()
-    )
-    pane.dock_proportion = 225
-    pane.control = DebugSettingsPanel(window, wx.ID_ANY, context=context)
-    pane.submenu = "_ZZ_" + _("Debug")
-    pane.helptext = _("OP Settings test")
-    window.on_pane_create(pane)
-    context.register("pane/debug_settings", pane)
 
 
 class ShutdownPanel(wx.Panel):
@@ -348,8 +330,7 @@ class DebugTreePanel(wx.Panel):
         self.Layout()
         # end wxGlade
 
-    @dispatch_to_main_thread
-    def _update_position(self, *args, **kwargs):
+    def _update_position(self, *args):
         self.context.elements.set_start_time("Emphasis mkdebug")
         self.update_position(True)
         self.context.elements.set_end_time("Emphasis mkdebug")
@@ -526,8 +507,7 @@ class DebugViewPanel(ScrolledPanel):
 
     @signal_listener("view;realized")
     @signal_listener("device;modified")
-    @dispatch_to_main_thread
-    def on_view_change(self, origin, *args, **kwargs):
+    def on_view_change(self, origin, *args):
         self.refresh_info()
         self.on_test_position(None)
 
@@ -1104,82 +1084,3 @@ class DebugRasterPlotterPanel(wx.Panel):
         )
         res.append(f"Time taken to finish process {time.time() - t:.3f}s\n")
         self.text_result.SetValue("\n".join(res))
-
-
-class DebugSettingsPanel(wx.Panel):
-    """
-    Displays information about operation settings
-    """
-
-    def __init__(self, *args, context=None, **kwds):
-        # begin wxGlade: PositionPanel.__init__
-        kwds["style"] = kwds.get("style", 0) | wx.TAB_TRAVERSAL
-        wx.Panel.__init__(self, *args, **kwds)
-        self.context = context
-        self.context.themes.set_window_colors(self)
-        self.info = wx.TreeCtrl(
-            self, wx.ID_ANY, style=wx.TR_DEFAULT_STYLE | wx.SUNKEN_BORDER
-        )
-
-        self.__set_properties()
-        self.__do_layout()
-
-        # end wxGlade
-
-        self._update_position()
-
-    def pane_show(self, *args):
-        self.context.listen("emphasized", self._update_position)
-        self.context.listen("selected", self._update_position)
-        self.context.listen("element_property_update", self._update_position)
-
-    def pane_hide(self, *args):
-        self.context.unlisten("emphasized", self._update_position)
-        self.context.unlisten("selected", self._update_position)
-        self.context.listen("element_property_update", self._update_position)
-
-    def __set_properties(self):
-        # begin wxGlade: PositionPanel.__set_properties
-        self.info.SetToolTip(_("Operation settings"))
-        self.info.SetMinSize((300, 200))
-        # end wxGlade
-
-    def __do_layout(self):
-        # begin wxGlade: PositionPanel.__do_layout
-        sizer_main = wx.BoxSizer(wx.VERTICAL)
-        sizer_1 = StaticBoxSizer(self, wx.ID_ANY, _("Operations:"), wx.VERTICAL)
-        sizer_1.Add(self.info, 1, wx.EXPAND, 0)
-        sizer_main.Add(sizer_1, 1, wx.EXPAND, 0)
-
-        self.SetSizer(sizer_main)
-        sizer_main.Fit(self)
-        self.Layout()
-        # end wxGlade
-
-    @dispatch_to_main_thread
-    def _update_position(self, *args, **kwargs):
-        self.update_position(True)
-
-    def update_position(self, reset):
-        def timestr(ts):
-            return (
-                "---" if ts is None else time.strftime("%H:%M:%S", time.localtime(ts))
-            )
-
-        try:
-            self.info.DeleteAllItems()
-        except RuntimeError:
-            return  # Already deleted...
-        root = self.info.AddRoot(_("Operation settings"))
-        for node in self.context.elements.ops():
-            nodeitem = self.info.AppendItem(root, str(node))
-            if hasattr(node, "settings"):
-                settings = node.settings
-                if isinstance(settings, dict):
-                    for key, value in settings.items():
-                        if isinstance(value, (list, tuple)):
-                            value = ", ".join(str(v) for v in value)
-                        self.info.AppendItem(nodeitem, f"{key}: {value}", data=value)
-                else:
-                    self.info.AppendItem(nodeitem, str(settings), data=settings)
-        self.info.ExpandAllChildren(root)

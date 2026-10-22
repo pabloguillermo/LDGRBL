@@ -66,7 +66,7 @@ from meerk40t.svgelements import (
     Polygon,
     Polyline,
 )
-from meerk40t.core.geomstr import Geomstr, stitch_geometries, stitcheable_nodes
+from meerk40t.tools.geomstr import Geomstr, stitch_geometries, stitcheable_nodes
 
 
 def plugin(kernel, lifecycle=None):
@@ -90,7 +90,7 @@ def init_commands(kernel):
     @self.console_argument("r_pos", type=str, help=_("Radius of the circle"))
     @self.console_command(
         "circle",
-        help="circle <x> <y> <r> : " + _("create a circle element"),
+        help=_("circle <x> <y> <r>"),
         input_type=("elements", None),
         output_type="elements",
         all_arguments_required=True,
@@ -105,17 +105,16 @@ def init_commands(kernel):
             # fmt:on
         except ValueError:
             raise CommandSyntaxError(_("Invalid length value."))
-        with self.node_lock:
-            node = self.elem_branch.add(
-                cx=xp,
-                cy=yp,
-                rx=rp,
-                ry=rp,  # Secondary radius equal to primary radius for circle
-                stroke=self.default_stroke,
-                stroke_width=self.default_strokewidth,
-                fill=self.default_fill,
-                type="elem ellipse",
-            )
+        node = self.elem_branch.add(
+            cx=xp,
+            cy=yp,
+            rx=rp,
+            ry=rp,  # Secondary radius equal to primary radius for circle
+            stroke=self.default_stroke,
+            stroke_width=self.default_strokewidth,
+            fill=self.default_fill,
+            type="elem ellipse",
+        )
         self.set_emphasis([node])
         node.focus()
         if data is None:
@@ -135,7 +134,7 @@ def init_commands(kernel):
     )
     @self.console_command(
         "ellipse",
-        help="ellipse <cx> <cy> <rx> <ry> : " + _("create an ellipse element"),
+        help=_("ellipse <cx> <cy> <rx> <ry>"),
         input_type=("elements", None),
         output_type="elements",
         all_arguments_required=True,
@@ -154,17 +153,16 @@ def init_commands(kernel):
             # fmt:on
         except ValueError:
             raise CommandSyntaxError(_("Invalid length value."))
-        with self.node_lock:
-            node = self.elem_branch.add(
-                cx=xp,
-                cy=yp,
-                rx=rx,
-                ry=ry,
-                stroke=self.default_stroke,
-                stroke_width=self.default_strokewidth,
-                fill=self.default_fill,
-                type="elem ellipse",
-            )
+        node = self.elem_branch.add(
+            cx=xp,
+            cy=yp,
+            rx=rx,
+            ry=ry,
+            stroke=self.default_stroke,
+            stroke_width=self.default_strokewidth,
+            fill=self.default_fill,
+            type="elem ellipse",
+        )
         node.altered()
         self.set_emphasis([node])
         node.focus()
@@ -192,7 +190,7 @@ def init_commands(kernel):
     @self.console_option("rotation", "r", type=Angle, help=_("Rotation of arc"))
     @self.console_command(
         "arc",
-        help="arc <cx> <cy> <rx> <ry> <start> <end> : " + _("create an arc element"),
+        help=_("arc <cx> <cy> <rx> <ry> <start> <end>"),
         input_type=("elements", None),
         output_type="elements",
         all_arguments_required=True,
@@ -238,15 +236,14 @@ def init_commands(kernel):
             cy=y_pos,
             rotation=rotation.radians,
         )
-        with self.node_lock:
-            node = self.elem_branch.add(
-                label="Arc",
-                geometry=geom,
-                stroke=self.default_stroke,
-                stroke_width=self.default_strokewidth,
-                fill=self.default_fill,
-                type="elem path",
-            )
+        node = self.elem_branch.add(
+            label="Arc",
+            geometry=geom,
+            stroke=self.default_stroke,
+            stroke_width=self.default_strokewidth,
+            fill=self.default_fill,
+            type="elem path",
+        )
         node.altered()
         self.set_emphasis([node])
         node.focus()
@@ -274,7 +271,7 @@ def init_commands(kernel):
     @self.console_option("ry", "y", type=str, help=_("rounded ry corner value."))
     @self.console_command(
         "rect",
-        help="rect <x> <y> <width> <height> : " + _("adds rectangle to scene"),
+        help=_("adds rectangle to scene"),
         input_type=("elements", None),
         output_type="elements",
         all_arguments_required=True,
@@ -307,19 +304,18 @@ def init_commands(kernel):
             # fmt:on
         except ValueError:
             raise CommandSyntaxError(_("Invalid length value."))
-        with self.node_lock:
-            node = self.elem_branch.add(
-                x=x_pos,
-                y=y_pos,
-                width=width,
-                height=height,
-                rx=rx,
-                ry=ry,
-                stroke=self.default_stroke,
-                stroke_width=self.default_strokewidth,
-                fill=self.default_fill,
-                type="elem rect",
-            )
+        node = self.elem_branch.add(
+            x=x_pos,
+            y=y_pos,
+            width=width,
+            height=height,
+            rx=rx,
+            ry=ry,
+            stroke=self.default_stroke,
+            stroke_width=self.default_strokewidth,
+            fill=self.default_fill,
+            type="elem rect",
+        )
         self.set_emphasis([node])
         node.focus()
         if data is None:
@@ -335,7 +331,7 @@ def init_commands(kernel):
     @self.console_argument("y1", type=str, help=_("end y position"))
     @self.console_command(
         "line",
-        help="line <x0> <y0> <x1> <y1> : " + _("adds line to scene"),
+        help=_("adds line to scene"),
         input_type=("elements", None),
         output_type="elements",
         all_arguments_required=True,
@@ -354,16 +350,15 @@ def init_commands(kernel):
             # fmt:on
         except ValueError:
             raise CommandSyntaxError(_("Invalid length value."))
-        with self.node_lock:
-            node = self.elem_branch.add(
-                x1=ax,
-                y1=ay,
-                x2=bx,
-                y2=by,
-                stroke=self.default_stroke,
-                stroke_width=self.default_strokewidth,
-                type="elem line",
-            )
+        node = self.elem_branch.add(
+            x1=ax,
+            y1=ay,
+            x2=bx,
+            y2=by,
+            stroke=self.default_stroke,
+            stroke_width=self.default_strokewidth,
+            type="elem line",
+        )
         node.altered()
         self.set_emphasis([node])
         node.focus()
@@ -416,14 +411,13 @@ def init_commands(kernel):
                     eparent._children.pop(idx)
             except IndexError:
                 pass
-            with self.node_lock:
-                nparent.parent.add_node(node)
-                if len(nparent.children) == 0:
-                    nparent.remove_node()
-                else:
-                    nparent.altered()
-                    node.emphasized = was_emphasized
-        self.refresh_signal()
+            nparent.parent.add_node(node)
+            if len(nparent.children) == 0:
+                nparent.remove_node()
+            else:
+                nparent.altered()
+                node.emphasized = was_emphasized
+        self.signal("refresh_scene", "Scene")
 
     @self.console_option("etype", "e", type=str, default="scanline")
     @self.console_option("distance", "d", type=str, default=None)
@@ -483,23 +477,23 @@ def init_commands(kernel):
         if etype is None:
             etype = "scanline"
         first_node = data[0]
-        with self.node_lock:
-            node = first_node.parent.add(
-                type="effect hatch",
-                label="Hatch Effect",
-                hatch_type=etype,
-                hatch_angle=angle.radians,
-                hatch_angle_delta=angle_delta.radians,
-                hatch_distance=distance,
-            )
-            node.append_children(data, fast=True)
+
+        node = first_node.parent.add(
+            type="effect hatch",
+            label="Hatch Effect",
+            hatch_type=etype,
+            hatch_angle=angle.radians,
+            hatch_angle_delta=angle_delta.radians,
+            hatch_distance=distance,
+        )
+        for n in data:
+            node.append_child(n)
 
         # Newly created! Classification needed?
         post.append(classify_new([node]))
 
         self.set_emphasis([node])
         node.focus()
-        self.signal("rebuild_tree", "elements")
 
     @self.console_option("wtype", "w", type=str, default="circle")
     @self.console_option("radius", "r", type=str, default=None)
@@ -557,22 +551,21 @@ def init_commands(kernel):
             channel(_("Invalid length value."))
             return
         first_node = data[0]
-        with self.node_lock:
-            node = first_node.parent.add(
-                type="effect wobble",
-                label="Wobble Effect",
-                wobble_type=wtype,
-                wobble_radius=rlen.length_mm,
-                wobble_interval=ilen.length_mm,
-            )
-            node.append_children(data, fast=True)
+        node = first_node.parent.add(
+            type="effect wobble",
+            label="Wobble Effect",
+            wobble_type=wtype,
+            wobble_radius=rlen.length_mm,
+            wobble_interval=ilen.length_mm,
+        )
+        for n in data:
+            node.append_child(n)
 
         # Newly created! Classification needed?
         post.append(classify_new([node]))
 
         self.set_emphasis([node])
         node.focus()
-        self.signal("rebuild_tree", "elements")
 
     @self.console_option(
         "size", "s", type=float, default=16, help=_("font size to for object")
@@ -580,7 +573,7 @@ def init_commands(kernel):
     @self.console_argument("text", type=str, help=_("quoted string of text"))
     @self.console_command(
         "text",
-        help="text <text> : " + _("create a (bitmap) text element"),
+        help=_("text <text>"),
         input_type=(None, "elements"),
         output_type="elements",
     )
@@ -590,10 +583,9 @@ def init_commands(kernel):
         if text is None:
             channel(_("No text specified"))
             return
-        with self.node_lock:
-            node = self.elem_branch.add(
-                text=text, matrix=Matrix(f"scale({UNITS_PER_PIXEL})"), type="elem text"
-            )
+        node = self.elem_branch.add(
+            text=text, matrix=Matrix(f"scale({UNITS_PER_PIXEL})"), type="elem text"
+        )
         node.font_size = size
         node.stroke = self.default_stroke
         node.stroke_width = self.default_strokewidth
@@ -1044,7 +1036,7 @@ def init_commands(kernel):
             if len(text_elems) > 0:
                 # Recalculate bounds
                 calculate_text_bounds(text_elems)
-            self.refresh_signal()
+            self.signal("refresh_scene", "Scene")
             self.signal("element_property_update", changed)
             self.validate_selected_area()
             if classify_required:
@@ -1181,7 +1173,7 @@ def init_commands(kernel):
                 e.altered()
                 changed.append(e)
         if len(changed) > 0:
-            self.refresh_signal()
+            self.signal("refresh_scene", "Scene")
             self.signal("element_property_update", changed)
 
         return "ops", data
@@ -1197,7 +1189,7 @@ def init_commands(kernel):
             return
         for e in data:
             e.set_dirty_bounds()
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         self.validate_selected_area()
 
     @self.console_option("douglas", "d", type=bool, action="store_true", default=False)
@@ -1274,7 +1266,7 @@ def init_commands(kernel):
                     )
         if len(data_changed) > 0:
             self.signal("element_property_update", data_changed)
-            self.refresh_signal()
+            self.signal("refresh_scene", "Scene")
         return "elements", data
 
     @self.console_command(
@@ -1293,8 +1285,7 @@ def init_commands(kernel):
         except AttributeError:
             # elem text does not have an as_path() object
             return "elements", data
-        with self.node_lock:
-            data[1].remove_node()
+        data[1].remove_node()
 
         from meerk40t.tools.pathtools import VectorMontonizer
 
@@ -1312,8 +1303,7 @@ def init_commands(kernel):
                 if not vm.is_point_inside(pt[0], pt[1]):
                     del pts_sub[i]
             path += Path(Polyline(pts_sub))
-        with self.node_lock:
-            node = self.elem_branch.add(path=path, type="elem path")
+        node = self.elem_branch.add(path=path, type="elem path")
         data.append(node)
         node.stroke = self.default_stroke
         node.stroke_width = self.default_strokewidth
@@ -1327,8 +1317,7 @@ def init_commands(kernel):
     @self.console_argument("mlist", type=str, help=_("list of positions"), nargs="*")
     @self.console_command(
         ("polygon", "polyline"),
-        help="poly(gon|line) (Length Length)* : "
-        + _("create a polygon or polyline element"),
+        help=_("poly(gon|line) (Length Length)*"),
         input_type=("elements", None),
         output_type="elements",
         all_arguments_required=True,
@@ -1348,8 +1337,7 @@ def init_commands(kernel):
         if shape.is_degenerate():
             channel(_("Shape is degenerate."))
             return "elements", data
-        with self.node_lock:
-            node = self.elem_branch.add(shape=shape, type="elem polyline")
+        node = self.elem_branch.add(shape=shape, type="elem polyline")
         node.stroke = self.default_stroke
         node.stroke_width = self.default_strokewidth
         node.fill = self.default_fill
@@ -1390,7 +1378,7 @@ def init_commands(kernel):
     )
     @self.console_command(
         "path",
-        help="path <svg path> : " + _("create a path element from svg path syntax"),
+        help=_("path <svg path>"),
         output_type="elements",
     )
     def element_path(path_d, data, post=None, **kwargs):
@@ -1401,8 +1389,8 @@ def init_commands(kernel):
             path *= f"Scale({UNITS_PER_PIXEL})"
         except (ValueError, AttributeError):
             raise CommandSyntaxError(_("Not a valid path_d string (try quotes)"))
-        with self.node_lock:
-            node = self.elem_branch.add(path=path, type="elem path")
+
+        node = self.elem_branch.add(path=path, type="elem path")
         node.stroke = self.default_stroke
         node.stroke_width = self.default_strokewidth
         node.fill = self.default_fill
@@ -1423,8 +1411,7 @@ def init_commands(kernel):
     )
     @self.console_command(
         "stroke-width",
-        help="stroke-width <length> : "
-        + _("set the stroke width of selected elements"),
+        help=_("stroke-width <length>"),
         input_type=(
             None,
             "elements",
@@ -1522,7 +1509,7 @@ def init_commands(kernel):
                 # the painted_bounds
                 e.translated(0, 0)
         self.signal("element_property_update", data)
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         return "elements", data
 
     @self.console_command(
@@ -1551,7 +1538,7 @@ def init_commands(kernel):
                 e.stroke_scaled = command == "enable_stroke_scale"
                 e.altered()
         self.signal("element_property_update", data)
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         return "elements", data
 
     @self.console_option("filter", "f", type=str, help="Filter indexes")
@@ -1562,7 +1549,7 @@ def init_commands(kernel):
     )
     @self.console_command(
         "linecap",
-        help="linecap <cap> : " + _("set the line cap style of selected elements"),
+        help=_("linecap <cap>"),
         input_type=(
             None,
             "elements",
@@ -1639,7 +1626,7 @@ def init_commands(kernel):
     )
     @self.console_command(
         "linejoin",
-        help="linejoin <join> : " + _("set the line join style of selected elements"),
+        help=_("linejoin <join>"),
         input_type=(
             None,
             "elements",
@@ -1724,7 +1711,7 @@ def init_commands(kernel):
     )
     @self.console_command(
         "fillrule",
-        help="fillrule <rule> : " + _("set the fill rule of selected elements"),
+        help=_("fillrule <rule>"),
         input_type=(
             None,
             "elements",
@@ -1796,7 +1783,7 @@ def init_commands(kernel):
     )
     @self.console_command(
         "stroke",
-        help="stroke <svg color> : " + _("set the stroke color of selected elements"),
+        help=_("stroke <svg color>"),
         input_type=(
             None,
             "elements",
@@ -1893,7 +1880,7 @@ def init_commands(kernel):
                 self.signal("refresh_tree", apply)
             else:
                 self.signal("element_property_reload", apply)
-                self.refresh_signal()
+                self.signal("refresh_scene", "Scene")
         return "elements", data
 
     @self.console_option(
@@ -1903,7 +1890,7 @@ def init_commands(kernel):
     @self.console_argument("color", type=Color, help=_("Color to set the fill to"))
     @self.console_command(
         "fill",
-        help="fill <svg color> : " + _("set the fill color of selected elements"),
+        help=_("fill <svg color>"),
         input_type=(
             None,
             "elements",
@@ -2005,7 +1992,7 @@ def init_commands(kernel):
                 self.set_end_time("classify")
             else:
                 self.signal("element_property_update", apply)
-                self.refresh_signal()
+                self.signal("refresh_scene", "Scene")
         return "elements", data
 
     @self.console_argument("x_offset", type=str, help=_("x offset."), default="0")
@@ -2044,13 +2031,6 @@ def init_commands(kernel):
         if bounds is None:
             channel(_("Nothing Selected"))
             return
-        selected = list(self.elems(emphasized=True))
-        frame_info = (
-            selected[0].display_label()
-            if len(selected) == 1
-            else f"{len(selected)} elements"
-        )
-
         x_pos = bounds[0]
         y_pos = bounds[1]
         width = bounds[2] - bounds[0]
@@ -2059,16 +2039,14 @@ def init_commands(kernel):
         y_pos -= y_offset
         width += x_offset * 2
         height += y_offset * 2
-        with self.node_lock:
-            node = self.elem_branch.add(
-                x=x_pos,
-                y=y_pos,
-                width=width,
-                height=height,
-                stroke=Color("red"),
-                type="elem rect",
-                label=f"Frame around {frame_info}",
-            )
+        node = self.elem_branch.add(
+            x=x_pos,
+            y=y_pos,
+            width=width,
+            height=height,
+            stroke=Color("red"),
+            type="elem rect",
+        )
         self.set_emphasis([node])
         node.focus()
         if data is None:
@@ -2090,7 +2068,7 @@ def init_commands(kernel):
     )
     @self.console_command(
         "rotate",
-        help="rotate <angle> : " + _("rotate selected elements"),
+        help=_("rotate <angle>"),
         input_type=(
             None,
             "elements",
@@ -2172,7 +2150,7 @@ def init_commands(kernel):
             for node in images:
                 self.do_image_update(node)
 
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         return "elements", data
 
     @self.console_argument("scale_x", type=str, help=_("scale_x value"))
@@ -2188,10 +2166,7 @@ def init_commands(kernel):
     )
     @self.console_command(
         "scale",
-        help="scale <scale> [<scale-y>]? : "
-        + _(
-            "scale selected elements (optionally different in y, and optionally from a point (default center of selection))"
-        ),
+        help=_("scale <scale> [<scale-y>]?"),
         input_type=(None, "elements"),
         output_type="elements",
     )
@@ -2292,7 +2267,7 @@ def init_commands(kernel):
             for node in images:
                 self.do_image_update(node)
             self.process_keyhole_updates(None)
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         self.signal("modified_by_tool")
         return "elements", data
 
@@ -2389,7 +2364,7 @@ def init_commands(kernel):
     )
     @self.console_command(
         "translate",
-        help="translate <tx> <ty> : " + _("translate selected elements"),
+        help=_("translate <tx> <ty>"),
         input_type=(None, "elements"),
         output_type="elements",
     )
@@ -2452,7 +2427,7 @@ def init_commands(kernel):
             except ValueError:
                 raise CommandSyntaxError
         if changes:
-            self.refresh_signal()
+            self.signal("refresh_scene", "Scene")
             self.signal("modified_by_tool")
         return "elements", data
 
@@ -2460,7 +2435,7 @@ def init_commands(kernel):
     @self.console_argument("ty", type=str, help=_("New y value"))
     @self.console_command(
         "position",
-        help="position <tx> <ty> : " + _("set the position of selected elements"),
+        help=_("position <tx> <ty>"),
         input_type=(None, "elements"),
         output_type="elements",
     )
@@ -2499,7 +2474,7 @@ def init_commands(kernel):
                     changes = True
             if changes:
                 self.process_keyhole_updates(None)
-                self.refresh_signal()
+                self.signal("refresh_scene", "Scene")
                 self.signal("modified_by_tool")
         return "elements", data
 
@@ -2611,7 +2586,7 @@ def init_commands(kernel):
 
             for node in images:
                 self.do_image_update(node)
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         return "elements", data
 
     @self.console_argument("sx", type=float, help=_("scale_x value"))
@@ -2622,8 +2597,7 @@ def init_commands(kernel):
     @self.console_argument("ty", type=str, help=_("translate_y value"))
     @self.console_command(
         "matrix",
-        help="matrix <sx> <kx> <ky> <sy> <tx> <ty> : "
-        + _("set the transformation matrix of selected elements"),
+        help=_("matrix <sx> <kx> <ky> <sy> <tx> <ty>"),
         input_type=(None, "elements"),
         output_type="elements",
     )
@@ -2680,7 +2654,7 @@ def init_commands(kernel):
                 raise CommandSyntaxError
             for node in images:
                 self.do_image_update(node)
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         return
 
     @self.console_command(
@@ -2707,7 +2681,7 @@ def init_commands(kernel):
                     images.append(e)
             for e in images:
                 self.do_image_update(e)
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         return "elements", data
 
     @self.console_command(
@@ -2910,20 +2884,19 @@ def init_commands(kernel):
                 if result is None:
                     channel("Could not stitch anything")
                     return
-                with self.node_lock:
-                    if not keep:
-                        for node in to_be_deleted:
-                            node.remove_node()
-                    for idx, g in enumerate(result):
-                        node = self.elem_branch.add(
-                            label=f"Stitch # {idx + 1}",
-                            stroke=default_stroke,
-                            stroke_width=default_strokewidth,
-                            fill=default_fill,
-                            geometry=g,
-                            type="elem path",
-                        )
-                        data_out.append(node)
+                if not keep:
+                    for node in to_be_deleted:
+                        node.remove_node()
+                for idx, g in enumerate(result):
+                    node = self.elem_branch.add(
+                        label=f"Stitch # {idx + 1}",
+                        stroke=default_stroke,
+                        stroke_width=default_strokewidth,
+                        fill=default_fill,
+                        geometry=g,
+                        type="elem path",
+                    )
+                    data_out.append(node)
             new_len = len(data_out)
             channel(
                 f"Sub-Paths before: {prev_len} -> consolidated to {new_len} sub-paths"
@@ -3009,24 +2982,23 @@ def init_commands(kernel):
             geom.append(Geomstr.circle(dia / 2, xp, yp))
         # _("Create cross") - hint for translator
         with self.undoscope("Create cross"):
-            with self.node_lock:
-                node = self.elem_branch.add(
-                    label=_("Cross at ({xp}, {yp})").format(
-                        xp=Length(xpos).length_mm, yp=Length(ypos).length_mm
-                    ),
-                    geometry=geom,
-                    stroke=self.default_stroke,
-                    stroke_width=self.default_strokewidth,
-                    fill=None,
-                    type="elem path",
-                )
+            node = self.elem_branch.add(
+                label=_("Cross at ({xp}, {yp})").format(
+                    xp=Length(xpos).length_mm, yp=Length(ypos).length_mm
+                ),
+                geometry=geom,
+                stroke=self.default_stroke,
+                stroke_width=self.default_strokewidth,
+                fill=None,
+                type="elem path",
+            )
             if data is None:
                 data = []
             data.append(node)
 
             # Newly created! Classification needed?
             post.append(classify_new(data))
-        self.refresh_signal()
+        self.signal("refresh_scene", "Scene")
         return "elements", data
 
     # --------------------------- END COMMANDS ------------------------------

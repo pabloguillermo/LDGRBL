@@ -3,7 +3,6 @@ Mixin functions for wxMeerk40t
 """
 
 import platform
-import functools
 from typing import List
 
 import wx
@@ -16,30 +15,40 @@ from meerk40t.svgelements import Matrix
 _ = wx.GetTranslation
 
 
-def dispatch_to_main_thread(func):
+def _patch_aui_notebook_pages():
     """
-    Decorator to ensure that the decorated function is called on the main thread.
-    If called from a different thread, it uses wx.CallAfter to dispatch it to the main thread.
+    wxWidgets 3.3+ asserts that pages added to an AuiNotebook are children of
+    it. Many panels are created with another parent, so reparent them first.
     """
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        if not wx.IsMainThread():
-            wx.CallAfter(func, *args, **kwargs)
-            return
-        return func(*args, **kwargs)
-
-    return wrapper
-
-
-def safe_enable_control(control, enabled=True):
-    """Re-enable a wx control after async work; ignore if the widget was destroyed."""
-    if control is None:
-        return
     try:
-        control.Enable(enabled)
-    except RuntimeError:
-        pass
+        import wx.aui
+
+        notebook_class = wx.aui.AuiNotebook
+        original_add = notebook_class.AddPage
+        original_insert = notebook_class.InsertPage
+    except (ImportError, AttributeError):
+        return
+
+    def _adopt(notebook, page):
+        try:
+            if page.GetParent() is not notebook:
+                page.Reparent(notebook)
+        except (AttributeError, RuntimeError):
+            pass
+
+    def add_page(self, page, *args, **kwargs):
+        _adopt(self, page)
+        return original_add(self, page, *args, **kwargs)
+
+    def insert_page(self, page_idx, page, *args, **kwargs):
+        _adopt(self, page)
+        return original_insert(self, page_idx, page, *args, **kwargs)
+
+    notebook_class.AddPage = add_page
+    notebook_class.InsertPage = insert_page
+
+
+_patch_aui_notebook_pages()
 
 
 ##############
@@ -261,36 +270,6 @@ def create_menu_for_node(gui, node, elements, optional_2nd_node=None) -> wx.Menu
 
     tree_operations_for_node = get_tree_operation_for_node(elements)
 
-    def op_status_help(func):
-        """
-        Status-bar help while the user highlights a tree/scene context menu entry.
-        When ``ribbon_verbose_hover_help`` is on, empty explicit help falls back to
-        the operation function's docstring (first paragraph).
-        """
-        verbose = gui.context.setting(bool, "ribbon_verbose_hover_help", True)
-        h = func.help
-        if h is None:
-            h = ""
-        elif callable(h):
-            try:
-                h = h()
-            except Exception:
-                h = ""
-        hs_base = str(h)
-        try:
-            hs = hs_base.format_map(func.func_dict)
-        except (KeyError, ValueError, TypeError, IndexError):
-            hs = hs_base
-        hs = str(hs).strip()
-        if verbose and not hs:
-            wrapped = getattr(func, "__wrapped__", None)
-            if wrapped is not None:
-                doc = getattr(wrapped, "__doc__", None) or ""
-                doc = str(doc).strip()
-                if doc:
-                    return doc.split("\n\n")[0].replace("\n", " ")[:800]
-        return hs if hs else ""
-
     def menu_functions(f, node):
         func_dict = dict(f.func_dict)
 
@@ -382,7 +361,7 @@ def create_menu_for_node(gui, node, elements, optional_2nd_node=None) -> wx.Menu
                                 parent_menu.AppendSeparator()
                                 func.separate_before = False
 
-                            parent_menu.AppendSubMenu(submenu, sname, op_status_help(func))
+                            parent_menu.AppendSubMenu(submenu, sname, func.help)
                             submenus[common] = submenu
                             parent_menu = submenu
 
@@ -403,7 +382,7 @@ def create_menu_for_node(gui, node, elements, optional_2nd_node=None) -> wx.Menu
             if func.radio_state is not None:
                 last_was_separator = False
                 item = menu_context.Append(
-                    wx.ID_ANY, func.real_name, op_status_help(func), wx.ITEM_RADIO
+                    wx.ID_ANY, func.real_name, func.help, wx.ITEM_RADIO
                 )
                 check = func.radio_state
                 item.Check(check)
@@ -425,9 +404,7 @@ def create_menu_for_node(gui, node, elements, optional_2nd_node=None) -> wx.Menu
                 else:
                     kind = wx.ITEM_NORMAL
                     check = None
-                item = menu_context.Append(
-                    wx.ID_ANY, func.real_name, op_status_help(func), kind
-                )
+                item = menu_context.Append(wx.ID_ANY, func.real_name, func.help, kind)
                 if check is not None:
                     item.Check(check)
                 if func.enabled:
@@ -471,7 +448,7 @@ def create_menu_for_node(gui, node, elements, optional_2nd_node=None) -> wx.Menu
                         if func.separate_before:
                             parent_menu.AppendSeparator()
                             func.separate_before = False
-                        parent_menu.AppendSubMenu(submenu, sname, op_status_help(func))
+                        parent_menu.AppendSubMenu(submenu, sname, func.help)
                         submenus[common] = submenu
                         parent_menu = submenu
 
@@ -487,7 +464,7 @@ def create_menu_for_node(gui, node, elements, optional_2nd_node=None) -> wx.Menu
             continue
         if func.radio_state is not None:
             item = menu_context.Append(
-                wx.ID_ANY, func.real_name, op_status_help(func), wx.ITEM_RADIO
+                wx.ID_ANY, func.real_name, func.help, wx.ITEM_RADIO
             )
             check = func.radio_state
             item.Check(check)
@@ -508,9 +485,7 @@ def create_menu_for_node(gui, node, elements, optional_2nd_node=None) -> wx.Menu
             else:
                 kind = wx.ITEM_NORMAL
                 check = None
-            item = menu_context.Append(
-                wx.ID_ANY, func.real_name, op_status_help(func), kind
-            )
+            item = menu_context.Append(wx.ID_ANY, func.real_name, func.help, kind)
             if check is not None:
                 item.Check(check)
             if func.enabled:
@@ -665,7 +640,6 @@ class TextCtrl(wx.TextCtrl):
         self._event_generated = None
         self._action_routine = None
         self._default_values = None
-        self._cooldown_active = False
 
         # You can set this to False, if you don't want logic to interfere with text input
         self.execute_action_on_change = True
@@ -725,11 +699,7 @@ class TextCtrl(wx.TextCtrl):
     def SetActionRoutine(self, action_routine):
         """
         This routine will be called after a lost_focus / text_enter event,
-        with cooldown protection to prevent duplicate calls on Linux systems where
-        Enter key may trigger both events. Once an action is triggered, subsequent
-        events are ignored for 300ms to prevent duplicates.
-
-        It's a simple way of dealing with all the
+        it's a simple way of dealing with all the
             ctrl.bind(wx.EVT_KILL_FOCUS / wx.EVT_TEXT_ENTER) things
         Yes, you can still have them, but you should call
             ctrl.prevalidate()
@@ -751,14 +721,6 @@ class TextCtrl(wx.TextCtrl):
 
     def set_default_values(self, def_values):
         self._default_values = def_values
-
-    def _start_cooldown(self):
-        """Activate cooldown and schedule automatic reset after 300ms."""
-        self._cooldown_active = True
-        wx.CallLater(300, self._end_cooldown)
-
-    def _end_cooldown(self):
-        self._cooldown_active = False
 
     def get_warn_status(self, txt):
         status = ""
@@ -893,11 +855,7 @@ class TextCtrl(wx.TextCtrl):
         # Needs to be passed on
         event.Skip()
         self.prevalidate("leave")
-        if self._action_routine is not None and (
-            platform.system() != "Linux" or not self._cooldown_active
-        ):
-            if platform.system() == "Linux":
-                self._start_cooldown()
+        if self._action_routine is not None:
             self._event_generated = wx.EVT_KILL_FOCUS
             try:
                 self._action_routine()
@@ -912,11 +870,7 @@ class TextCtrl(wx.TextCtrl):
         # Let others deal with it after me
         event.Skip()
         self.prevalidate("enter")
-        if self._action_routine is not None and (
-            platform.system() != "Linux" or not self._cooldown_active
-        ):
-            if platform.system() == "Linux":
-                self._start_cooldown()
+        if self._action_routine is not None:
             self._event_generated = wx.EVT_TEXT_ENTER
             try:
                 self._action_routine()
@@ -1531,24 +1485,21 @@ class HoverButton(wxButton):
         return self._focus_color
 
     def Enable(self, value):
-        try:
-            if value:
-                super().SetBackgroundColour(self._background_color)
+        if value:
+            super().SetBackgroundColour(self._background_color)
+        else:
+            if self._disable_color is None:
+                r, g, b, a = self._background_color.Get()
+                color = wx.Colour(
+                    min(255, int(1.5 * r)),
+                    min(255, int(1.5 * g)),
+                    min(255, int(1.5 * b)),
+                )
             else:
-                if self._disable_color is None:
-                    r, g, b, a = self._background_color.Get()
-                    color = wx.Colour(
-                        min(255, int(1.5 * r)),
-                        min(255, int(1.5 * g)),
-                        min(255, int(1.5 * b)),
-                    )
-                else:
-                    color = self._disable_color
-                super().SetBackgroundColour(color)
-            super().Enable(value)
-            self.Refresh()
-        except RuntimeError:
-            pass
+                color = self._disable_color
+            super().SetBackgroundColour(color)
+        super().Enable(value)
+        self.Refresh()
 
     def on_enter(self, event):
         if self._focus_color is not None:
@@ -2072,22 +2023,6 @@ WX_SPECIALKEYS = {
     wx.WXK_CLEAR: "clear",
     wx.WXK_WINDOWS_MENU: "menu",
 }
-
-
-TREE_SELECTED_DELETE_KEYS = frozenset(("delete", "numpad_delete"))
-
-
-def key_triggers_tree_selected_delete(keyvalue):
-    """True when the key should run the same command as the ribbon Delete button."""
-    return keyvalue in TREE_SELECTED_DELETE_KEYS
-
-
-def emit_tree_selected_delete(context):
-    """Delete emphasized elements (same as ribbon Delete). Returns True if executed."""
-    if context.elements.has_emphasis():
-        context("tree selected delete\n")
-        return True
-    return False
 
 
 def is_navigation_key(keyvalue):

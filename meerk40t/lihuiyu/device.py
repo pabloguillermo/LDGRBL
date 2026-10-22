@@ -13,7 +13,7 @@ from meerk40t.core.laserjob import LaserJob
 from meerk40t.core.spoolers import Spooler
 from meerk40t.core.units import UNITS_PER_MIL, Length
 from meerk40t.core.view import View
-from meerk40t.device.devicechoices import get_effect_choices, get_operation_choices
+from meerk40t.device.devicechoices import get_effect_choices
 from meerk40t.device.mixins import Status
 from meerk40t.kernel import CommandSyntaxError, Service, signal_listener
 
@@ -39,17 +39,6 @@ class LihuiyuDevice(Service, Status):
                 default = c.get("default")
                 if attr is not None and default is not None:
                     setattr(self, attr, default)
-
-        # This device prefers to display power level in ppi
-        self.setting(bool, "use_percent_for_power_display", False)
-        self.setting(bool, "use_minute_for_speed_display", False)
-
-        def _use_percent_for_power():
-            return getattr(self, "use_percent_for_power_display", True)
-
-        def _use_minute_for_speed():
-            return getattr(self, "use_minute_for_speed_display", False)
-
         choices = [
             {
                 "attr": "bedwidth",
@@ -130,7 +119,7 @@ class LihuiyuDevice(Service, Status):
                 # _("User Offset")
                 # Hint for translation _("User Offset")
                 "subsection": "_30_User Offset",
-                "ignore": True,  # Does not work yet, so don't show
+                "ignore": True, # Does not work yet, so don't show
             },
             {
                 "attr": "user_margin_y",
@@ -144,7 +133,7 @@ class LihuiyuDevice(Service, Status):
                 "section": "_30_" + _("Laser Parameters"),
                 # Hint for translation _("User Offset")
                 "subsection": "_30_User Offset",
-                "ignore": True,  # Does not work yet, so don't show
+                "ignore": True, # Does not work yet, so don't show
             },
         ]
         self.register_choices("bed_dim", choices)
@@ -418,8 +407,7 @@ class LihuiyuDevice(Service, Status):
                 "default": 140,
                 "type": float,
                 "label": _("Max vector speed"),
-                "style": "speed",
-                "perminute": _use_minute_for_speed,
+                "trailer": "mm/s",
                 "tip": _(
                     "What is the highest reliable speed your laser is able to perform vector operations, i.e. engraving or cutting.\n"
                     "You can finetune this in the Warning Sections of this configuration dialog."
@@ -433,8 +421,7 @@ class LihuiyuDevice(Service, Status):
                 "default": 750,
                 "type": float,
                 "label": _("Max raster speed"),
-                "style": "speed",
-                "perminute": _use_minute_for_speed,
+                "trailer": "mm/s",
                 "tip": _(
                     "What is the highest reliable speed your laser is able to perform raster or image operations.\n"
                     "You can finetune this in the Warning Sections of this configuration dialog."
@@ -464,15 +451,6 @@ class LihuiyuDevice(Service, Status):
         self.register_choices("lhy-general", choices)
 
         self.register_choices("lhy-effects", get_effect_choices(self))
-        self.register_choices(
-            "lhy-defaults",
-            get_operation_choices(
-                self,
-                default_cut_speed=5,
-                default_engrave_speed=25,
-                default_raster_speed=250,
-            ),
-        )
 
         choices = [
             {
@@ -528,8 +506,7 @@ class LihuiyuDevice(Service, Status):
                 "type": float,
                 "label": _("X Travel Speed:"),
                 "tip": _("Minimum travel distance before invoking a rapid jog move."),
-                "style": "speed",
-                "perminute": _use_minute_for_speed,
+                "trailer": "mm/s",
                 "conditional": (self, "rapid_override"),
                 "section": "_00_" + _("Rapid Override"),
                 "subsection": "_10_",
@@ -541,8 +518,7 @@ class LihuiyuDevice(Service, Status):
                 "type": float,
                 "label": _("Y Travel Speed:"),
                 "tip": _("Minimum travel distance before invoking a rapid jog move."),
-                "style": "speed",
-                "perminute": _use_minute_for_speed,
+                "trailer": "mm/s",
                 "conditional": (self, "rapid_override"),
                 "section": "_00_" + _("Rapid Override"),
                 "subsection": "_10_",
@@ -564,6 +540,9 @@ class LihuiyuDevice(Service, Status):
             },
         ]
         self.register_choices("lhy-speed", choices)
+
+        # This device prefers to display power level in ppi
+        self.setting(bool, "use_percent_for_power_display", False)
 
         # Tuple contains 4 value pairs: Speed Low, Speed High, Power Low, Power High, each with enabled, value
         self.setting(
@@ -697,15 +676,14 @@ class LihuiyuDevice(Service, Status):
         @self.console_argument("dy", type=Length, help=_("change in y"))
         @self.console_command(
             "move_at_speed",
-            help="move_at_speed <speed> <dx> <dy> : "
-            + _("move the laser at a specific speed and distance"),
+            help=_("move_at_speed <speed> <dx> <dy>"),
             all_arguments_required=True,
         )
         def move_speed(channel, _, speed, dx, dy, **kwgs):
             def move_at_speed():
                 yield "set", "speed", speed
                 yield "program_mode"
-                yield "move_rel", dx.length_mil, dy.length_mil, False
+                yield "move_rel", dx.length_mil, dy.length_mil
                 yield "rapid_mode"
 
             if self.spooler.is_idle:
@@ -844,23 +822,12 @@ class LihuiyuDevice(Service, Status):
             "pause",
             help=_("realtime pause/resume of the machine"),
         )
-        def realtime_pause(channel, _, **kwgs):
+        def realtime_pause(**kwgs):
             if self.driver.paused:
                 self.driver.resume()
             else:
                 self.driver.pause()
             self.signal("pause")
-
-        @self.console_command(
-            "resume",
-            help=_("realtime resume of the machine"),
-        )
-        def realtime_resume(channel, _, **kwgs):
-            if self.driver.paused:
-                self.driver.resume()
-                self.signal("pause")
-            else:
-                channel(_("Device is not paused"))
 
         @self.console_command(("estop", "abort"), help=_("Abort Job"))
         def pipe_abort(channel, _, **kwgs):
@@ -1166,7 +1133,6 @@ class LihuiyuDevice(Service, Status):
                 mkconst.RASTER_GREEDY_H,
                 mkconst.RASTER_GREEDY_V,
                 mkconst.RASTER_SPIRAL,
-                mkconst.RASTER_DIAGONAL,
             ),  # Greedy loses registration way too often to be reliable
             "gantry": True,
             "legacy": self.legacy_raster,
@@ -1337,11 +1303,3 @@ class LihuiyuDevice(Service, Status):
         if self.networked:
             return f"tcp {self.address}:{self.port}"
         return f"usb {'auto' if self.usb_index < 0 else self.usb_index}"
-
-    def get_operation_defaults(self, operation_type: str) -> dict:
-        """
-        Returns the default settings for a specific operation type.
-        """
-        settings = self.get_operation_power_speed_defaults(operation_type)
-        # Anything additional for the operation type can be added here
-        return settings

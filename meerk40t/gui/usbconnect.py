@@ -2,8 +2,7 @@ import wx
 
 from meerk40t.gui.icons import icons8_usb_connector
 from meerk40t.gui.mwindow import MWindow
-from meerk40t.gui.wxutils import TextCtrl, dispatch_to_main_thread
-
+from meerk40t.gui.wxutils import TextCtrl
 _ = wx.GetTranslation
 
 
@@ -38,9 +37,11 @@ class UsbConnectPanel(wx.Panel):
         active = self._active_when_loaded
         self.context.channel(f"{active}/usb").unwatch(self.update_text)
 
-    @dispatch_to_main_thread
-    def update_text(self, text, **kwargs):
-        self.update_text_gui(text + "\n")
+    def update_text(self, text):
+        if not wx.IsMainThread():
+            wx.CallAfter(self.update_text_gui, text + "\n")
+        else:
+            self.update_text_gui(text + "\n")
 
     def update_text_gui(self, text):
         try:

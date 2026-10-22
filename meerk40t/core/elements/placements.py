@@ -29,6 +29,7 @@ Functions:
     A tuple containing the type of operations and the added placement.
 """
 
+
 from meerk40t.core.units import Angle as UAngle
 from meerk40t.core.units import Length
 
@@ -135,19 +136,18 @@ def init_commands(kernel):
             return
         added = []
         # print (f"x={x}, y={y}, nx={nx}, ny={ny}, dx={dx}, dy={dy}, rotation={rotation}, corner={corner}, loops={loops}")
-        with self.node_lock:
-            node = self.op_branch.add(
-                x=x,
-                y=y,
-                nx=nx,
-                ny=ny,
-                dx=dx,
-                dy=dy,
-                rotation=rotation.radians,
-                corner=corner,
-                loops=loops,
-                type="place point",
-            )
+        node = self.op_branch.add(
+            x=x,
+            y=y,
+            nx=nx,
+            ny=ny,
+            dx=dx,
+            dy=dy,
+            rotation=rotation.radians,
+            corner=corner,
+            loops=loops,
+            type="place point",
+        )
         added.append(node)
         self.set_emphasis(added)
         return "ops", added
@@ -160,8 +160,7 @@ def init_commands(kernel):
         all_arguments_required=True,
     )
     def place_current(command, channel, _, **kwargs):
-        with self.node_lock:
-            node = self.op_branch.add(type="place current")
+        node = self.op_branch.add(type="place current")
         added = [node]
         self.set_emphasis(added)
         return "ops", added
@@ -290,7 +289,7 @@ def init_commands(kernel):
     #                 idx_y += 1
 
     #     self.signal("updateop_tree")
-    #     self.refresh_signal()
+    #     self.signal("refresh_scene", "Scene")
     #     return "ops", ops
 
     # --------------------------- END COMMANDS ------------------------------

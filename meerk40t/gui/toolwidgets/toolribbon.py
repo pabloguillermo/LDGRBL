@@ -10,7 +10,7 @@ import wx
 
 from meerk40t.gui.scene.sceneconst import RESPONSE_CHAIN, RESPONSE_CONSUME
 from meerk40t.gui.toolwidgets.toolwidget import ToolWidget
-from meerk40t.core.geomstr import Geomstr
+from meerk40t.tools.geomstr import Geomstr
 
 
 class RibbonNode:
@@ -517,8 +517,8 @@ class RibbonTool(ToolWidget):
     Ribbon Tool draws new segments by animating some click and press locations.
     """
 
-    def __init__(self, scene, mode="gravity", **kwargs):
-        ToolWidget.__init__(self, scene, **kwargs)
+    def __init__(self, scene, mode="gravity"):
+        ToolWidget.__init__(self, scene)
         self.stop = False
         if mode == "gravity":
             self.ribbon = Ribbon.gravity_tool()

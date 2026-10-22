@@ -1,7 +1,9 @@
 """
-This module provides a basic operation panel that allows to access
-fundamental properties of operations. This is supposed to provide
-a simpler interface to operations
+This module provides a LightBurn-like "Cuts / Layers" panel:
+a table with all operations (layers) showing their colour, mode,
+speed/power, output, show and air-assist states, an editor for the
+most important settings of the selected layer and a colour palette
+to assign the selected elements to a layer.
 """
 
 import wx
@@ -15,14 +17,10 @@ from .icons import (
     icon_air_off,
     icon_air_on,
     icon_ignore,
-    icon_points,
-    icons8_direction,
-    icons8_image,
-    icons8_laser_beam,
-    icons8_laserbeam_weak,
+    icons8_down,
+    icons8_up,
 )
 from .wxutils import (
-    ScrolledPanel,
     StaticBoxSizer,
     TextCtrl,
     create_menu,
@@ -30,20 +28,69 @@ from .wxutils import (
     wxButton,
     wxCheckBox,
     wxComboBox,
-    wxStaticBitmap,
+    wxListCtrl,
     wxStaticText,
-    dispatch_to_main_thread,
 )
 
 _ = wx.GetTranslation
 
 BUTTONSIZE = 20
 
+COL_INDEX = 0
+COL_MODE = 1
+COL_SPEED_POWER = 2
+COL_OUTPUT = 3
+COL_SHOW = 4
+COL_AIR = 5
+COL_NAME = 6
+
+# Operation types that can be chosen as layer mode
+MODES = (
+    ("op engrave", "Engrave"),
+    ("op cut", "Cut"),
+    ("op raster", "Raster"),
+    ("op image", "Image"),
+    ("op dots", "Dots"),
+)
+
+# Default palette, the classic LightBurn order starts with black, blue, red...
+PALETTE = (
+    "#000000",
+    "#0000FF",
+    "#FF0000",
+    "#00E000",
+    "#D0D000",
+    "#FF8000",
+    "#00E0E0",
+    "#FF00FF",
+    "#B4B4B4",
+    "#0000A0",
+    "#A00000",
+    "#00A000",
+    "#A0A000",
+    "#C08000",
+    "#00A0FF",
+    "#A000A0",
+)
+
+
+def mode_name(optype):
+    for key, label in MODES:
+        if key == optype:
+            return _(label)
+    return optype[3:].capitalize() if optype.startswith("op ") else optype
+
+
+def contrast_colour(colour):
+    """Black or white, whatever is better readable on the given wx.Colour"""
+    lum = 0.299 * colour.Red() + 0.587 * colour.Green() + 0.114 * colour.Blue()
+    return wx.BLACK if lum > 140 else wx.WHITE
+
 
 class BasicOpPanel(wx.Panel):
     """
-    Basic interface to show operations and assign elements to them.
-    Very much like the layer concept in other laser software products
+    LightBurn-like "Cuts / Layers" interface to show operations,
+    to edit their main properties and to assign elements to them.
     """
 
     def __init__(self, *args, context=None, **kwds):
@@ -52,19 +99,11 @@ class BasicOpPanel(wx.Panel):
         self.context = context
         self.context.themes.set_window_colors(self)
 
-        # icons for coolant-indicator
-        isize = 20 * self.context.root.bitmap_correction_scale
-        self.cool_icons = {
-            0: icon_ignore.GetBitmap(resize=isize),
-            1: icon_air_on.GetBitmap(resize=isize, color="green"),
-            2: icon_air_off.GetBitmap(resize=isize, color="red"),
-        }
-
         # Refresh logic
         self.visible = False
         self.pending_ops = dict()
         self.ignore_refill = False
-        self.filtered = True
+        self.filtered = False
         self._refill_job = Job(
             process=self.fill_operations,
             job_name="basicops_fillop",
@@ -72,6 +111,155 @@ class BasicOpPanel(wx.Panel):
             times=1,
             run_main=True,
         )
+        self.listed_ops = []
+        self.selected_op = None
+        self.use_percent = False
+        self.use_mm_min = False
+        self.std_color_back = None
+        self.std_color_fore = None
+
+        self.icon_size = dip_size(self, 18, 18)[0]
+        self.image_list = wx.ImageList(self.icon_size, self.icon_size)
+        self.idx_check_on = -1
+        self.idx_check_off = -1
+        self.idx_air = {}
+        self.idx_layer = {}
+
+        main_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # --- Toolbar
+        tool_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.check_filtered = wxCheckBox(self, wx.ID_ANY, _("Hide unused"))
+        self.check_filtered.SetToolTip(_("Suppress non-used operations"))
+        self.check_filtered.SetValue(self.filtered)
+        tool_sizer.Add(self.check_filtered, 1, wx.ALIGN_CENTER_VERTICAL, 0)
+
+        bsize = dip_size(self, 25, 25)
+        bmp_size = bsize[0] * 0.7 * self.context.root.bitmap_correction_scale
+        self.btn_up = wxButton(self, wx.ID_ANY, size=bsize)
+        self.btn_up.SetBitmap(icons8_up.GetBitmap(resize=bmp_size))
+        self.btn_up.SetToolTip(_("Move the selected layer up (burnt earlier)"))
+        self.btn_down = wxButton(self, wx.ID_ANY, size=bsize)
+        self.btn_down.SetBitmap(icons8_down.GetBitmap(resize=bmp_size))
+        self.btn_down.SetToolTip(_("Move the selected layer down (burnt later)"))
+        self.btn_add = wxButton(self, wx.ID_ANY, "+", size=bsize)
+        self.btn_add.SetToolTip(_("Add a new layer"))
+        self.btn_config = wxButton(self, wx.ID_ANY, "...", size=bsize)
+        self.btn_config.SetToolTip(_("Options for all operations"))
+        for btn in (self.btn_up, self.btn_down, self.btn_add, self.btn_config):
+            btn.SetMinSize(bsize)
+            tool_sizer.Add(btn, 0, wx.ALIGN_CENTER_VERTICAL, 0)
+        main_sizer.Add(tool_sizer, 0, wx.EXPAND, 0)
+
+        # --- Layer table
+        self.list_ops = wxListCtrl(
+            self,
+            wx.ID_ANY,
+            style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.LC_HRULES | wx.LC_VRULES,
+            context=self.context.root,
+            list_name="list_cuts_layers",
+        )
+        self.list_ops.AppendColumn("#", format=wx.LIST_FORMAT_LEFT, width=dip_size(self, 42, -1)[0])
+        self.list_ops.AppendColumn(_("Mode"), format=wx.LIST_FORMAT_LEFT, width=dip_size(self, 62, -1)[0])
+        self.list_ops.AppendColumn(_("Spd/Pwr"), format=wx.LIST_FORMAT_LEFT, width=dip_size(self, 78, -1)[0])
+        self.list_ops.AppendColumn(_("Output"), format=wx.LIST_FORMAT_CENTER, width=dip_size(self, 48, -1)[0])
+        self.list_ops.AppendColumn(_("Show"), format=wx.LIST_FORMAT_CENTER, width=dip_size(self, 42, -1)[0])
+        self.list_ops.AppendColumn(_("Air"), format=wx.LIST_FORMAT_CENTER, width=dip_size(self, 34, -1)[0])
+        self.list_ops.AppendColumn(_("Name"), format=wx.LIST_FORMAT_LEFT, width=dip_size(self, 80, -1)[0])
+        self.list_ops.resize_columns()
+        self.list_ops.SetImageList(self.image_list, wx.IMAGE_LIST_SMALL)
+        self.list_ops.SetToolTip(
+            _("Click Output / Show / Air to toggle, click Mode to change the type.")
+            + "\n"
+            + _("Double click: open all properties of the layer")
+            + "\n"
+            + _("Right click: extended options for the layer")
+        )
+        main_sizer.Add(self.list_ops, 1, wx.EXPAND, 0)
+
+        # --- Editor for the selected layer
+        self.editor_sizer = StaticBoxSizer(
+            self, wx.ID_ANY, _("Layer settings"), wx.VERTICAL
+        )
+        grid = wx.FlexGridSizer(cols=4, vgap=2, hgap=4)
+        grid.AddGrowableCol(1, 1)
+        grid.AddGrowableCol(3, 1)
+
+        def textbox(check="float"):
+            ctrl = TextCtrl(
+                self,
+                wx.ID_ANY,
+                "",
+                limited=True,
+                check=check,
+                style=wx.TE_PROCESS_ENTER,
+                nonzero=True,
+            )
+            ctrl.SetMinSize(dip_size(self, 45, -1))
+            return ctrl
+
+        self.label_speed = wxStaticText(self, wx.ID_ANY, _("Speed"))
+        self.text_speed = textbox()
+        self.label_power = wxStaticText(self, wx.ID_ANY, _("Power"))
+        self.text_power = textbox()
+        self.label_passes = wxStaticText(self, wx.ID_ANY, _("Passes"))
+        self.text_passes = textbox("int")
+        self.label_dpi = wxStaticText(self, wx.ID_ANY, _("DPI"))
+        self.text_dpi = textbox("int")
+        self.text_passes.SetToolTip(_("How often shall this layer be burnt"))
+        self.text_dpi.SetToolTip(_("Resolution (line interval) of raster / image layers"))
+        for ctrl in (
+            self.label_speed,
+            self.text_speed,
+            self.label_power,
+            self.text_power,
+            self.label_passes,
+            self.text_passes,
+            self.label_dpi,
+            self.text_dpi,
+        ):
+            flag = wx.ALIGN_CENTER_VERTICAL
+            if isinstance(ctrl, TextCtrl):
+                flag |= wx.EXPAND
+            grid.Add(ctrl, 1 if isinstance(ctrl, TextCtrl) else 0, flag, 0)
+        self.label_no_layer = wxStaticText(
+            self, wx.ID_ANY, _("Select a layer in the table to edit it")
+        )
+        self.editor_sizer.Add(self.label_no_layer, 0, wx.EXPAND | wx.ALL, 2)
+        self.editor_grid = grid
+        self.editor_sizer.Add(grid, 0, wx.EXPAND, 0)
+
+        edit_btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.btn_assign = wxButton(self, wx.ID_ANY, _("Assign selection"))
+        self.btn_assign.SetToolTip(
+            _("Assign the selected elements to the selected layer.")
+        )
+        self.btn_properties = wxButton(self, wx.ID_ANY, _("All properties..."))
+        self.btn_properties.SetToolTip(
+            _("Open the property dialog for the selected layer")
+        )
+        edit_btn_sizer.Add(self.btn_assign, 1, wx.EXPAND, 0)
+        edit_btn_sizer.Add(self.btn_properties, 1, wx.EXPAND, 0)
+        self.editor_sizer.Add(edit_btn_sizer, 0, wx.EXPAND, 0)
+        main_sizer.Add(self.editor_sizer, 0, wx.EXPAND, 0)
+
+        # --- Colour palette
+        palette_sizer = wx.WrapSizer(wx.HORIZONTAL)
+        swatch = dip_size(self, 18, 18)
+        for hexcolor in PALETTE:
+            btn = wx.Panel(self, wx.ID_ANY, size=swatch, style=wx.BORDER_SIMPLE)
+            btn.SetMinSize(swatch)
+            btn.SetBackgroundColour(wx.Colour(hexcolor))
+            btn.SetToolTip(
+                _("Assign the selected elements to the layer with this colour")
+                + "\n"
+                + _("(a new layer will be created if there is none)")
+            )
+            btn.Bind(wx.EVT_LEFT_DOWN, self.on_palette(hexcolor))
+            palette_sizer.Add(btn, 0, wx.ALL, 1)
+        main_sizer.Add(palette_sizer, 0, wx.EXPAND | wx.TOP, 2)
+
+        # --- Classification options
         choices = [
             _("Leave color"),
             _("Op inherits color"),
@@ -108,45 +296,122 @@ class BasicOpPanel(wx.Panel):
         self.context.elements.setting(int, "classify_impose_default", 0)
         self.check_exclusive.SetValue(self.context.elements.classify_inherit_exclusive)
         self.check_all_similar.SetValue(self.context.elements.classify_all_similar)
-        value = self.context.elements.classify_impose_default
-        self.combo_apply_color.SetSelection(value)
+        self.combo_apply_color.SetSelection(
+            self.context.elements.classify_impose_default
+        )
+        classif_sizer = StaticBoxSizer(
+            self, wx.ID_ANY, _("Classification"), wx.HORIZONTAL
+        )
+        classif_sizer.Add(self.combo_apply_color, 1, wx.ALIGN_CENTER_VERTICAL, 0)
+        classif_sizer.Add(self.check_exclusive, 0, wx.ALIGN_CENTER_VERTICAL, 0)
+        classif_sizer.Add(self.check_all_similar, 0, wx.ALIGN_CENTER_VERTICAL, 0)
+        main_sizer.Add(classif_sizer, 0, wx.EXPAND, 0)
+
+        self.SetSizer(main_sizer)
+        self.Layout()
+
+        # --- Events
+        self.check_filtered.Bind(wx.EVT_CHECKBOX, self.on_check_filtered)
         self.check_exclusive.Bind(wx.EVT_CHECKBOX, self.on_check_exclusive)
         self.check_all_similar.Bind(wx.EVT_CHECKBOX, self.on_check_allsimilar)
         self.combo_apply_color.Bind(wx.EVT_COMBOBOX, self.on_combo_color)
-
-        self.btn_config = wxButton(self, wx.ID_ANY, "...")
-        self.btn_config.SetMinSize(dip_size(self, 25, -1))
-        self.btn_config.SetMaxSize(dip_size(self, 25, -1))
+        self.btn_up.Bind(wx.EVT_BUTTON, self.on_move(-1))
+        self.btn_down.Bind(wx.EVT_BUTTON, self.on_move(1))
+        self.btn_add.Bind(wx.EVT_BUTTON, self.on_add_layer)
         self.btn_config.Bind(wx.EVT_BUTTON, self.on_config)
-        self.main_sizer = wx.BoxSizer(wx.VERTICAL)
-        self.op_panel = ScrolledPanel(self, wx.ID_ANY)
-        self.context.themes.set_window_colors(self.op_panel)
-        self.op_panel.SetupScrolling()
-        self.operation_sizer = None
-        classif_sizer = StaticBoxSizer(
-            self, wx.ID_ANY, _("Classification"), wx.VERTICAL
-        )
-        upper_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        upper_sizer.Add(self.combo_apply_color, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-        upper_sizer.Add(self.btn_config, 0, wx.ALIGN_CENTER_VERTICAL, 0)
+        self.btn_assign.Bind(wx.EVT_BUTTON, self.on_assign)
+        self.btn_properties.Bind(wx.EVT_BUTTON, self.on_properties)
+        self.list_ops.Bind(wx.EVT_LEFT_DOWN, self.on_list_left)
+        self.list_ops.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_list_selected)
+        self.list_ops.Bind(wx.EVT_LIST_ITEM_DESELECTED, self.on_list_deselected)
+        self.list_ops.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.on_properties)
+        self.list_ops.Bind(wx.EVT_LIST_ITEM_RIGHT_CLICK, self.on_list_right)
+        self.text_speed.SetActionRoutine(self.on_text_speed)
+        self.text_power.SetActionRoutine(self.on_text_power)
+        self.text_passes.SetActionRoutine(self.on_text_passes)
+        self.text_dpi.SetActionRoutine(self.on_text_dpi)
 
-        classif_sizer.Add(upper_sizer, 0, wx.EXPAND, 0)
-
-        lower_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        lower_sizer.Add(self.check_exclusive, 1, wx.EXPAND, 0)
-        lower_sizer.Add(self.check_all_similar, 1, wx.EXPAND, 0)
-        classif_sizer.Add(lower_sizer, 0, wx.EXPAND, 0)
-
-        self.main_sizer.Add(self.op_panel, 1, wx.EXPAND, 0)
-        self.main_sizer.Add(classif_sizer, 0, wx.EXPAND, 0)
-        self.SetSizer(self.main_sizer)
-        self.Layout()
-        self.use_percent = False
-        self.use_mm_min = False
         self.set_display()
-        self.op_ctrl_list = []
-        self.std_color_back = None
-        self.std_color_fore = None
+        self.build_static_images()
+        self.update_editor()
+
+    # ------------------------------------------------------------------
+    # Images
+    # ------------------------------------------------------------------
+
+    def _checkbox_bitmap(self, checked):
+        size = self.icon_size
+        bmp = wx.Bitmap(size, size)
+        dc = wx.MemoryDC(bmp)
+        dc.SetBackground(wx.Brush(self.list_ops.GetBackgroundColour()))
+        dc.Clear()
+        flags = wx.CONTROL_CHECKED if checked else 0
+        margin = max(1, size // 8)
+        wx.RendererNative.Get().DrawCheckBox(
+            self.list_ops,
+            dc,
+            wx.Rect(margin, margin, size - 2 * margin, size - 2 * margin),
+            flags,
+        )
+        dc.SelectObject(wx.NullBitmap)
+        return bmp
+
+    def _layer_bitmap(self, colour, index):
+        size = self.icon_size
+        bmp = wx.Bitmap(size, size)
+        dc = wx.MemoryDC(bmp)
+        dc.SetBackground(wx.Brush(self.list_ops.GetBackgroundColour()))
+        dc.Clear()
+        dc.SetPen(wx.Pen(wx.Colour(80, 80, 80)))
+        dc.SetBrush(wx.Brush(colour))
+        dc.DrawRectangle(0, 0, size, size)
+        font = self.list_ops.GetFont()
+        font.SetPointSize(max(6, font.GetPointSize() - 2))
+        dc.SetFont(font)
+        dc.SetTextForeground(contrast_colour(colour))
+        label = f"{index:02d}"
+        tw, th = dc.GetTextExtent(label)
+        dc.DrawText(label, (size - tw) // 2, (size - th) // 2)
+        dc.SelectObject(wx.NullBitmap)
+        return bmp
+
+    def _fit_bitmap(self, bmp):
+        if bmp.GetWidth() == self.icon_size and bmp.GetHeight() == self.icon_size:
+            return bmp
+        img = bmp.ConvertToImage()
+        img = img.Scale(self.icon_size, self.icon_size, wx.IMAGE_QUALITY_HIGH)
+        return wx.Bitmap(img)
+
+    def build_static_images(self):
+        self.image_list.RemoveAll()
+        self.idx_layer = {}
+        self.idx_check_on = self.image_list.Add(self._checkbox_bitmap(True))
+        self.idx_check_off = self.image_list.Add(self._checkbox_bitmap(False))
+        isize = self.icon_size
+        air_icons = {
+            0: icon_ignore.GetBitmap(resize=isize),
+            1: icon_air_on.GetBitmap(resize=isize, color="green"),
+            2: icon_air_off.GetBitmap(resize=isize, color="red"),
+        }
+        self.idx_air = {
+            key: self.image_list.Add(self._fit_bitmap(bmp))
+            for key, bmp in air_icons.items()
+        }
+
+    def layer_image(self, op, index):
+        col = op.color
+        if col is not None and col.argb is not None:
+            colour = wx.Colour(swizzlecolor(col))
+        else:
+            colour = wx.LIGHT_GREY
+        key = (colour.GetRGB(), index)
+        if key not in self.idx_layer:
+            self.idx_layer[key] = self.image_list.Add(self._layer_bitmap(colour, index))
+        return self.idx_layer[key]
+
+    # ------------------------------------------------------------------
+    # Display helpers
+    # ------------------------------------------------------------------
 
     def set_display(self):
         dev = self.context.device
@@ -156,6 +421,431 @@ class BasicOpPanel(wx.Panel):
         self.use_percent = dev.use_percent_for_power_display
         dev.setting(bool, "use_mm_min_for_speed_display", False)
         self.use_mm_min = dev.use_mm_min_for_speed_display
+        speed_unit = "mm/min" if self.use_mm_min else "mm/s"
+        power_unit = "%" if self.use_percent else "ppi"
+        self.label_speed.SetLabel(_("Speed") + f" ({speed_unit})")
+        self.label_power.SetLabel(_("Power") + f" ({power_unit})")
+        self.text_speed.SetToolTip(_("Speed ({unit})").format(unit=speed_unit))
+        self.text_power.SetToolTip(_("Power ({unit})").format(unit=power_unit))
+
+    def speed_text(self, op):
+        value = getattr(op, "speed", None)
+        if value is None:
+            return ""
+        if self.use_mm_min:
+            return f"{value * 60:.0f}"
+        return f"{value:.1f}"
+
+    def power_text(self, op):
+        value = getattr(op, "power", None)
+        if value is None:
+            return ""
+        if self.use_percent:
+            return f"{value / 10:.1f}"
+        return f"{value:.0f}"
+
+    @staticmethod
+    def passes_value(op):
+        if getattr(op, "passes_custom", False):
+            return max(1, op.passes or 1)
+        return 1
+
+    def fill_row(self, row, op):
+        index = self.listed_ops.index(op)
+        self.list_ops.SetItem(row, COL_INDEX, "", self.layer_image(op, index))
+        self.list_ops.SetItem(row, COL_MODE, mode_name(op.type))
+        spd_pwr = ""
+        if hasattr(op, "speed") and hasattr(op, "power"):
+            spd_pwr = f"{self.speed_text(op)} / {self.power_text(op)}"
+        passes = self.passes_value(op)
+        if passes > 1:
+            spd_pwr = f"{passes}x {spd_pwr}"
+        self.list_ops.SetItem(row, COL_SPEED_POWER, spd_pwr)
+        output = bool(getattr(op, "output", True))
+        self.list_ops.SetItem(
+            row,
+            COL_OUTPUT,
+            "",
+            self.idx_check_on if output else self.idx_check_off,
+        )
+        visible = bool(getattr(op, "is_visible", True)) or output
+        self.list_ops.SetItem(
+            row,
+            COL_SHOW,
+            "",
+            self.idx_check_on if visible else self.idx_check_off,
+        )
+        coolant = getattr(op, "coolant", 0)
+        if coolant is None or coolant not in self.idx_air:
+            coolant = 0
+        self.list_ops.SetItem(row, COL_AIR, "", self.idx_air[coolant])
+        label = op.display_label() if op.label is not None else ""
+        self.list_ops.SetItem(row, COL_NAME, label or "")
+
+    def refresh_op(self, op):
+        try:
+            row = self.listed_ops.index(op)
+        except ValueError:
+            return
+        self.fill_row(row, op)
+
+    # ------------------------------------------------------------------
+    # Table population
+    # ------------------------------------------------------------------
+
+    def fill_operations(self):
+        if self.context.kernel.is_shutdown:
+            return
+        try:
+            self.list_ops.Freeze()
+        except RuntimeError:
+            return
+        self.list_ops.DeleteAllItems()
+        self.build_static_images()
+        self.listed_ops = []
+        for op in list(self.context.elements.ops()):
+            if op is None or not op.type.startswith("op "):
+                continue
+            if self.filtered and len(op.children) == 0:
+                continue
+            self.listed_ops.append(op)
+        selected_row = -1
+        for row, op in enumerate(self.listed_ops):
+            self.list_ops.InsertItem(row, "")
+            self.fill_row(row, op)
+            if op is self.selected_op:
+                selected_row = row
+        if self.std_color_back is None:
+            self.std_color_back = self.list_ops.GetBackgroundColour()
+            self.std_color_fore = self.list_ops.GetForegroundColour()
+        if selected_row >= 0:
+            self.list_ops.Select(selected_row)
+            self.list_ops.EnsureVisible(selected_row)
+        else:
+            self.selected_op = None
+        self.list_ops.Thaw()
+        self.highlight_operations(source="fill_operations")
+        self.update_editor()
+
+    def highlight_operations(self, source=None):
+        if self.std_color_back is None:
+            return
+        highlight_back = wx.SystemSettings().GetColour(wx.SYS_COLOUR_HIGHLIGHT)
+        highlight_back = highlight_back.ChangeLightness(160)
+        active_ops = set()
+        emphasized = set(
+            self.context.elements.flat(types=elem_nodes, emphasized=True)
+        )
+        if emphasized:
+            for op in self.listed_ops:
+                for node in op.children:
+                    if node.type == "reference":
+                        node = node.node
+                    if node in emphasized:
+                        active_ops.add(op)
+                        break
+        for row, op in enumerate(self.listed_ops):
+            if row >= self.list_ops.GetItemCount():
+                break
+            if op in active_ops:
+                self.list_ops.SetItemBackgroundColour(row, highlight_back)
+                self.list_ops.SetItemTextColour(row, contrast_colour(highlight_back))
+            else:
+                self.list_ops.SetItemBackgroundColour(row, self.std_color_back)
+                self.list_ops.SetItemTextColour(row, self.std_color_fore)
+
+    # ------------------------------------------------------------------
+    # Editor
+    # ------------------------------------------------------------------
+
+    def update_editor(self):
+        op = self.selected_op
+        has_op = op is not None
+        for ctrl in (self.btn_up, self.btn_down, self.btn_assign, self.btn_properties):
+            ctrl.Enable(has_op)
+        self.label_no_layer.Show(not has_op)
+        self.editor_grid.ShowItems(has_op)
+        if not has_op:
+            self.editor_sizer.SetLabel(_("Layer settings"))
+            self.Layout()
+            return
+        title = mode_name(op.type)
+        if op.label:
+            title += ": " + op.display_label()
+        self.editor_sizer.SetLabel(title)
+        self.text_speed.Enable(hasattr(op, "speed"))
+        self.text_speed.SetValue(self.speed_text(op))
+        self.text_power.Enable(hasattr(op, "power"))
+        self.text_power.SetValue(self.power_text(op))
+        self.text_passes.Enable(hasattr(op, "passes"))
+        self.text_passes.SetValue(str(self.passes_value(op)))
+        has_dpi = op.type in ("op raster", "op image") and hasattr(op, "dpi")
+        self.label_dpi.Show(has_dpi)
+        self.text_dpi.Show(has_dpi)
+        if has_dpi:
+            self.text_dpi.SetValue(str(int(op.dpi)))
+        self.Layout()
+
+    def _changed(self, op, field):
+        self.ignore_refill = True
+        self.refresh_op(op)
+        self.context.elements.signal("element_property_reload", [op], field)
+
+    def on_text_speed(self):
+        op = self.selected_op
+        if op is None or not hasattr(op, "speed"):
+            return
+        try:
+            value = float(self.text_speed.GetValue())
+        except ValueError:
+            return
+        if self.use_mm_min:
+            value /= 60
+        if op.speed != value:
+            op.speed = value
+            self._changed(op, "text_speed")
+
+    def on_text_power(self):
+        op = self.selected_op
+        if op is None or not hasattr(op, "power"):
+            return
+        try:
+            value = float(self.text_power.GetValue())
+        except ValueError:
+            return
+        if self.use_percent:
+            value *= 10
+        if op.power != value:
+            op.power = value
+            self._changed(op, "text_power")
+
+    def on_text_passes(self):
+        op = self.selected_op
+        if op is None or not hasattr(op, "passes"):
+            return
+        try:
+            value = max(1, int(self.text_passes.GetValue()))
+        except ValueError:
+            return
+        if value != self.passes_value(op):
+            op.passes = value
+            op.passes_custom = value != 1
+            self._changed(op, "text_passes")
+
+    def on_text_dpi(self):
+        op = self.selected_op
+        if op is None or not hasattr(op, "dpi"):
+            return
+        try:
+            value = int(self.text_dpi.GetValue())
+        except ValueError:
+            return
+        if value > 0 and op.dpi != value:
+            op.dpi = value
+            self._changed(op, "text_dpi")
+
+    # ------------------------------------------------------------------
+    # Table events
+    # ------------------------------------------------------------------
+
+    def _op_at_row(self, row):
+        if 0 <= row < len(self.listed_ops):
+            return self.listed_ops[row]
+        return None
+
+    def on_list_selected(self, event):
+        self.selected_op = self._op_at_row(event.GetIndex())
+        self.update_editor()
+
+    def on_list_deselected(self, event):
+        if self.list_ops.GetSelectedItemCount() == 0:
+            self.selected_op = None
+            self.update_editor()
+
+    def on_list_left(self, event):
+        event.Skip()
+        row, flags, col = self.list_ops.HitTestSubItem(event.GetPosition())
+        op = self._op_at_row(row)
+        if op is None:
+            return
+        if col == COL_OUTPUT:
+            self.toggle_output(op)
+        elif col == COL_SHOW:
+            self.toggle_show(op)
+        elif col == COL_AIR:
+            self.toggle_air(op)
+        elif col == COL_MODE:
+            wx.CallAfter(self.popup_mode_menu, op)
+
+    def on_list_right(self, event):
+        op = self._op_at_row(event.GetIndex())
+        if op is None:
+            return
+        op.selected = True
+        create_menu(self, op, self.context.elements)
+
+    def toggle_output(self, op):
+        if not hasattr(op, "output"):
+            return
+        op.output = not op.output
+        if op.output and hasattr(op, "is_visible"):
+            op.is_visible = True
+        op.updated()
+        self._changed(op, "output")
+        self.context.elements.signal("warn_state_update", "")
+        self.context.elements.signal("refresh_scene", "Scene")
+
+    def toggle_show(self, op):
+        if not hasattr(op, "is_visible"):
+            return
+        if getattr(op, "output", False):
+            # Burnt layers are always shown
+            return
+        op.is_visible = not op.is_visible
+        op.updated()
+        self.context.elements.validate_selected_area()
+        self._changed(op, "is_visible")
+        self.context.elements.signal("refresh_scene", "Scene")
+
+    def toggle_air(self, op):
+        if not hasattr(op, "coolant"):
+            return
+        value = op.coolant
+        if value is None:
+            value = 0
+        value = (value + 1) % 3
+        op.coolant = value
+        op.updated()
+        self._changed(op, "coolant")
+
+    def popup_mode_menu(self, op):
+        menu = wx.Menu()
+        for optype, label in MODES:
+            item = menu.AppendRadioItem(wx.ID_ANY, _(label))
+            item.Check(optype == op.type)
+            self.Bind(wx.EVT_MENU, self.on_change_mode(op, optype), item)
+        self.PopupMenu(menu)
+        menu.Destroy()
+
+    def on_change_mode(self, op, optype):
+        def handler(event):
+            if op.type == optype:
+                return
+            elements = self.context.elements
+            new_settings = dict(op.settings)
+            new_settings["type"] = optype
+            with elements.undoscope("Convert operation"):
+                new_op = op.replace_node(keep_children=True, **new_settings)
+            if self.selected_op is op:
+                self.selected_op = new_op
+            elements.signal("rebuild_tree", "operations")
+
+        return handler
+
+    # ------------------------------------------------------------------
+    # Toolbar / editor buttons
+    # ------------------------------------------------------------------
+
+    def on_check_filtered(self, event):
+        self.filtered = self.check_filtered.GetValue()
+        self.context.schedule(self._refill_job)
+
+    def on_move(self, direction):
+        def handler(event):
+            op = self.selected_op
+            if op is None:
+                return
+            elements = self.context.elements
+            children = elements.op_branch._children
+            try:
+                idx = children.index(op)
+            except ValueError:
+                return
+            # Skip over hidden (filtered) operations
+            target = idx + direction
+            while 0 <= target < len(children) and children[target] not in self.listed_ops:
+                target += direction
+            if target < 0 or target >= len(children):
+                return
+            with elements.undoscope("Operation order"):
+                children.pop(idx)
+                children.insert(target, op)
+            if hasattr(elements, "_invalidate_ops_cache"):
+                elements._invalidate_ops_cache()
+            elements.signal("rebuild_tree", "operations")
+
+        return handler
+
+    def on_add_layer(self, event):
+        menu = wx.Menu()
+        for optype, label in MODES:
+            item = menu.Append(wx.ID_ANY, _(label))
+            self.Bind(wx.EVT_MENU, self.on_add_type(optype), item)
+        self.PopupMenu(menu)
+        menu.Destroy()
+
+    def on_add_type(self, optype, color=None):
+        def handler(event):
+            self.add_layer(optype, color)
+
+        return handler
+
+    def add_layer(self, optype, color=None):
+        elements = self.context.elements
+        kwargs = {}
+        if color is not None:
+            kwargs["color"] = Color(color)
+        with elements.undoscope("Add operation"):
+            op = elements.op_branch.add(type=optype, **kwargs)
+        self.selected_op = op
+        elements.signal("add_operation", op)
+        return op
+
+    def on_palette(self, hexcolor):
+        def handler(event):
+            target = Color(hexcolor)
+            op = None
+            for candidate in self.context.elements.ops():
+                if not candidate.type.startswith("op "):
+                    continue
+                col = candidate.color
+                if col is not None and Color.distance(col, target) < 1:
+                    op = candidate
+                    break
+            if not list(self.context.elements.elems(emphasized=True)):
+                if op is not None:
+                    self.select_op(op)
+                return
+            if op is None:
+                op = self.add_layer("op engrave", hexcolor)
+            self.execute_single(op, "auto")
+            self.select_op(op)
+
+        return handler
+
+    def select_op(self, op):
+        self.selected_op = op
+        try:
+            row = self.listed_ops.index(op)
+        except ValueError:
+            self.context.schedule(self._refill_job)
+            return
+        self.list_ops.Select(row)
+        self.list_ops.EnsureVisible(row)
+        self.update_editor()
+
+    def on_assign(self, event):
+        if self.selected_op is not None:
+            self.execute_single(self.selected_op, "auto")
+
+    def on_properties(self, event):
+        op = self.selected_op
+        if op is None:
+            return
+        activate = self.context.kernel.lookup("function/open_property_window_for_node")
+        if activate is not None:
+            op.selected = True
+            activate(op)
 
     def on_combo_color(self, event):
         value = self.combo_apply_color.GetCurrentSelection()
@@ -196,538 +886,15 @@ class BasicOpPanel(wx.Panel):
         mynode.selected = True
         create_menu(self, mynode, self.context.elements)
 
-    def fill_operations(self):
-        def on_button_left(node):
-            def handler(event):
-                # print(f"Left for {mynode.type}")
-                self.execute_single(mynode, "auto")
-
-            mynode = node
-            return handler
-
-        def on_button_right(node):
-            def handler(event):
-                # print(f"Right for {mynode.type}")
-
-                mynode.selected = True
-                create_menu(self, mynode, self.context.elements)
-
-            mynode = node
-            return handler
-
-        # def on_button_doubleclick(node):
-        #     def handler(event):
-        #         print(f"Double for {mynode.type}")
-        #         activate = self.context.kernel.lookup(
-        #             "function/open_property_window_for_node"
-        #         )
-        #         if activate is not None:
-        #             mynode.selected = True
-        #             activate(mynode)
-
-        #     mynode = node
-        #     return handler
-
-        def on_check_show(node):
-            def handler(event):
-                # print(f"Show for {mynode.type}")
-                cb = event.GetEventObject()
-                newflag = True
-                if hasattr(mynode, "output") and hasattr(mynode, "is_visible"):
-                    if mynode.output is not None:
-                        if not mynode.output:
-                            newflag = bool(not mynode.is_visible)
-
-                    mynode.is_visible = newflag
-                    mynode.updated()
-                    self.context.elements.validate_selected_area()
-                    ops = [mynode]
-                    self.ignore_refill = True
-                    self.context.elements.signal("element_property_update", ops)
-                    self.context.elements.signal("refresh_scene", "Scene")
-                cb.SetValue(newflag)
-
-            mynode = node
-            return handler
-
-        def on_check_output(node, showctrl):
-            def handler(event):
-                # print(f"Output for {mynode.type}")
-                cb = event.GetEventObject()
-                if hasattr(mynode, "output"):
-                    flag_out = not mynode.output
-                    try:
-                        mynode.output = flag_out
-                        mynode.updated()
-                    except AttributeError:
-                        pass
-                    if flag_out:
-                        myshow.SetValue(True)
-                        myshow.Enable(False)
-                    else:
-                        myshow.Enable(True)
-                    self.ignore_refill = True
-                    ops = [mynode]
-                    self.context.elements.signal("element_property_update", ops)
-                    self.context.elements.signal("warn_state_update", "")
-                    self.context.elements.signal("refresh_scene", "Scene")
-                    cb.SetValue(flag_out)
-
-            mynode = node
-            myshow = showctrl
-            return handler
-
-        def on_check_cool(node):
-            def handler(event):
-                cb = event.GetEventObject()
-                if hasattr(mynode, "coolant"):
-                    value = mynode.coolant
-                    if value is None:
-                        value = 0
-                    value += 1
-                    if value > 2:
-                        value = 0
-                    mynode.coolant = value
-                    mynode.updated()
-                    ops = [mynode]
-                    self.ignore_refill = True
-                    self.context.elements.signal("element_property_update", ops)
-                    cb.SetBitmap(self.cool_icons[mynode.coolant])
-
-            mynode = node
-            return handler
-
-        def on_speed(node, tbox):
-            def handler():
-                # print(f"Speed for {mynode.type}")
-                try:
-                    value = float(mytext.GetValue())
-                    if self.use_mm_min:
-                        value /= 60
-                    if mynode.speed != value:
-                        mynode.speed = value
-                        self.ignore_refill = True
-                        self.context.elements.signal(
-                            "element_property_reload", [mynode], "text_speed"
-                        )
-                except ValueError:
-                    pass
-
-            mynode = node
-            mytext = tbox
-            return handler
-
-        def on_power(node, tbox):
-            def handler():
-                # print(f"Power for {mynode.type}")
-                try:
-                    value = float(mytext.GetValue())
-                    if self.use_percent:
-                        value *= 10
-                    if mynode.power != value:
-                        mynode.power = value
-                        self.ignore_refill = True
-                        self.context.elements.signal(
-                            "element_property_reload", [mynode], "text_power"
-                        )
-                except ValueError:
-                    pass
-
-            mynode = node
-            mytext = tbox
-            return handler
-
-        def on_label_single(node):
-            def handler(event):
-                self.context.elements.set_emphasis(None)
-                for elem in mynode.children:
-                    elem.selected = True
-                    try:
-                        if elem.node is not None:
-                            elem.node.emphasized = True
-                    except AttributeError:
-                        # Is a structured node like hatch-effect
-                        pass
-                mynode.highlighted = True
-                self.context.elements.signal("refresh_scene", "Scene")
-
-            mynode = node
-            return handler
-
-        def on_label_double(node):
-            def handler(event):
-                activate = self.context.kernel.lookup(
-                    "function/open_property_window_for_node"
-                )
-                if activate is not None:
-                    mynode.selected = True
-                    activate(mynode)
-
-            mynode = node
-            return handler
-
-        def on_check_filtered(event):
-            obj = event.GetEventObject()
-            self.filtered = obj.GetValue()
-            self.context.schedule(self._refill_job)
-
-        def get_bitmap(node):
-            def get_color():
-                iconcolor = None
-                background = node.color
-                if background is not None and background.argb is not None:
-                    c1 = Color("Black")
-                    c2 = Color("White")
-                    if Color.distance(background, c1) > Color.distance(background, c2):
-                        iconcolor = c1
-                    else:
-                        iconcolor = c2
-                return iconcolor, background
-
-            iconsize = BUTTONSIZE
-            result = None
-            d = None
-            if node.type == "op raster":
-                c, d = get_color()
-                result = icons8_direction.GetBitmap(
-                    color=c,
-                    resize=iconsize * self.context.root.bitmap_correction_scale,
-                    noadjustment=True,
-                    keepalpha=True,
-                )
-            elif node.type == "op image":
-                c, d = get_color()
-                result = icons8_image.GetBitmap(
-                    color=c,
-                    resize=iconsize * self.context.root.bitmap_correction_scale,
-                    noadjustment=True,
-                    keepalpha=True,
-                )
-            elif node.type == "op engrave":
-                c, d = get_color()
-                result = icons8_laserbeam_weak.GetBitmap(
-                    color=c,
-                    resize=iconsize * self.context.root.bitmap_correction_scale,
-                    noadjustment=True,
-                    keepalpha=True,
-                )
-            elif node.type == "op cut":
-                c, d = get_color()
-                result = icons8_laser_beam.GetBitmap(
-                    color=c,
-                    resize=iconsize * self.context.root.bitmap_correction_scale,
-                    noadjustment=True,
-                    keepalpha=True,
-                )
-            elif node.type == "op dots":
-                c, d = get_color()
-                result = icon_points.GetBitmap(
-                    color=c,
-                    resize=iconsize * self.context.root.bitmap_correction_scale,
-                    noadjustment=True,
-                    keepalpha=True,
-                )
-            return d, result
-
-        if self.context.kernel.is_shutdown:
-            return
-        if self.operation_sizer:
-            self.operation_sizer.Clear()
-            self.op_panel.DestroyChildren()
-        try:
-            self.op_panel.Freeze()
-        except RuntimeError:
-            return
-        self.operation_sizer = StaticBoxSizer(
-            self.op_panel,
-            wx.ID_ANY,
-            _("Operations"),
-            wx.VERTICAL,
-            context=self.context,
-        )
-        self.op_panel.SetSizer(self.operation_sizer)
-        elements = self.context.elements
-        self.op_ctrl_list.clear()
-
-        info_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        self.check_filtered = wxCheckBox(self.op_panel, wx.ID_ANY)
-        self.check_filtered.SetToolTip(_("Suppress non-used operations"))
-        self.check_filtered.SetValue(self.filtered)
-        self.check_filtered.SetMinSize(
-            dip_size(self, 25, -1)
-        )  # 20 from button + 5 from spacer
-        self.check_filtered.SetMaxSize(dip_size(self, 25, -1))
-        info_sizer.Add(self.check_filtered, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-        self.check_filtered.Bind(wx.EVT_CHECKBOX, on_check_filtered)
-
-        header = wxStaticText(self.op_panel, wx.ID_ANY, label="A")
-        self.context.themes.set_window_colors(header)
-        header.SetMinSize(dip_size(self, 20, -1))
-        header.SetMaxSize(dip_size(self, 20, -1))
-        header.SetToolTip(
-            _(
-                "A: Active = toggle whether the elements assigned to this operation will be burned or not"
-            )
-        )
-        info_sizer.Add(header, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-
-        header = wxStaticText(self.op_panel, wx.ID_ANY, label="S")
-        self.context.themes.set_window_colors(header)
-        header.SetMinSize(dip_size(self, 20, -1))
-        header.SetMaxSize(dip_size(self, 20, -1))
-        header.SetToolTip(
-            _(
-                "S: Show = if inactive then you can suppress the drawing of the assigned elements"
-            )
-        )
-        info_sizer.Add(header, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-
-        header = wxStaticText(self.op_panel, wx.ID_ANY, label="C")
-        self.context.themes.set_window_colors(header)
-        header.SetMinSize(dip_size(self, 20, -1))
-        header.SetMaxSize(dip_size(self, 20, -1))
-        header.SetToolTip(
-            _(
-                "C: Coolant = determines whether coolant remains / will be turned on / turned off at start of this operation"
-            )
-        )
-        info_sizer.Add(header, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-
-        unit = " [%]" if self.use_percent else ""
-        header = wxStaticText(
-            self.op_panel, wx.ID_ANY, label=_("Power {unit}").format(unit=unit)
-        )
-        self.context.themes.set_window_colors(header)
-        header.SetMaxSize(dip_size(self, 30, -1))
-        header.SetMaxSize(dip_size(self, 70, -1))
-        info_sizer.Add(header, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-
-        header = wxStaticText(self.op_panel, wx.ID_ANY, label=_("Speed"))
-        self.context.themes.set_window_colors(header)
-        header.SetMaxSize(dip_size(self, 30, -1))
-        header.SetMaxSize(dip_size(self, 70, -1))
-        info_sizer.Add(header, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-
-        self.operation_sizer.Add(info_sizer, 0, wx.EXPAND, 0)
-        self.op_ctrl_list.clear()
-        for op in list(elements.ops()):
-            if op is None:
-                continue
-            if self.filtered and len(op.children) == 0:
-                continue
-            if op.type.startswith("op "):
-                info = _(op.type[3:].capitalize())
-                if op.label is not None:
-                    info = info[0] + ": " + op.display_label()
-                op_sizer = wx.BoxSizer(wx.HORIZONTAL)
-                self.operation_sizer.Add(op_sizer, 0, wx.EXPAND, 0)
-                btn = wxStaticBitmap(
-                    self.op_panel,
-                    id=wx.ID_ANY,
-                    size=(BUTTONSIZE, BUTTONSIZE),
-                    # style=wx.BORDER_RAISED,
-                )
-                col, image = get_bitmap(op)
-                if image is not None:
-                    pass
-                if col is not None:
-                    btn.SetBackgroundColour(wx.Colour(swizzlecolor(col)))
-                else:
-                    btn.SetBackgroundColour(wx.LIGHT_GREY)
-                if image is None:
-                    btn.SetBitmap(wx.NullBitmap)
-                else:
-                    btn.SetBitmap(image)
-
-                btn.SetToolTip(
-                    info
-                    + "\n"
-                    + _("Assign the selected elements to the operation.")
-                    + "\n"
-                    + _("Right click: Extended options for operation")
-                )
-                btn.SetMinSize(dip_size(self, 20, -1))
-                btn.SetMaxSize(dip_size(self, 20, -1))
-                # btn.Bind(wx.EVT_ENTER_WINDOW, self.on_mouse_over)
-                # btn.Bind(wx.EVT_LEAVE_WINDOW, self.on_mouse_leave)
-                btn.Bind(wx.EVT_LEFT_DOWN, on_button_left(op))
-                btn.Bind(wx.EVT_RIGHT_DOWN, on_button_right(op))
-                # btn.Bind(wx.EVT_LEFT_DCLICK, on_button_doubleclick(op))
-                op_sizer.Add(btn, 0, wx.ALIGN_CENTER_VERTICAL, 0)
-
-                op_sizer.AddSpacer(5)
-
-                c_out = wxCheckBox(self.op_panel, id=wx.ID_ANY)
-                c_out.SetMinSize(dip_size(self, 20, -1))
-                c_out.SetMaxSize(dip_size(self, 20, -1))
-
-                if hasattr(op, "output"):
-                    flag = bool(op.output)
-                    c_out.SetValue(flag)
-                    showflag = not flag
-                else:
-                    c_out.Enable(False)
-                    showflag = False
-                c_out.SetToolTip(
-                    info
-                    + "\n"
-                    + _("Enable this operation for inclusion in Execute Job.")
-                )
-                op_sizer.Add(c_out, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-
-                c_show = wxCheckBox(self.op_panel, id=wx.ID_ANY)
-                c_show.SetMinSize(dip_size(self, 20, -1))
-                c_show.SetMaxSize(dip_size(self, 20, -1))
-                c_show.SetToolTip(
-                    info + "\n" + _("Hide all contained elements on scene if not set.")
-                )
-                op_sizer.Add(c_show, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-
-                if hasattr(op, "is_visible"):
-                    flag = bool(op.is_visible)
-                    c_show.SetValue(flag)
-                else:
-                    showflag = False
-                c_show.Enable(showflag)
-
-                c_cool = wxStaticBitmap(self.op_panel, id=wx.ID_ANY)
-                c_cool.SetMinSize(dip_size(self, 20, -1))
-                c_cool.SetMaxSize(dip_size(self, 20, -1))
-
-                if hasattr(op, "coolant"):
-                    value = op.coolant
-                    if value is None or value > 2 or value < 0:
-                        value = 0
-                    c_cool.SetBitmap(self.cool_icons[value])
-                    c_cool.Enable(True)
-                else:
-                    c_cool.Enable(False)
-                c_cool.SetToolTip(
-                    info
-                    + "\n"
-                    + _("Set coolant to on/off or leave unchanged (default)")
-                )
-                op_sizer.Add(c_cool, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-
-                self.op_panel.Bind(wx.EVT_CHECKBOX, on_check_output(op, c_show), c_out)
-                self.op_panel.Bind(wx.EVT_CHECKBOX, on_check_show(op), c_show)
-                c_cool.Bind(wx.EVT_LEFT_DOWN, on_check_cool(op))
-
-                t_power = TextCtrl(
-                    self.op_panel,
-                    wx.ID_ANY,
-                    "",
-                    limited=True,
-                    check="float",
-                    style=wx.TE_PROCESS_ENTER,
-                    nonzero=True,
-                )
-
-                t_power.SetMinSize(dip_size(self, 30, -1))
-                t_power.SetMaxSize(dip_size(self, 70, -1))
-                op_sizer.Add(t_power, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-                if hasattr(op, "power"):
-                    sval = op.power if op.power is not None else 0
-                    if self.use_percent:
-                        t_power.SetValue(f"{sval / 10:.0f}")
-                        unit = "%"
-                    else:
-                        t_power.SetValue(f"{sval:.0f}")
-                        unit = "ppi"
-                    t_power.SetToolTip(
-                        info + "\n" + _("Power ({unit})").format(unit=unit)
-                    )
-                else:
-                    t_power.Enable(False)
-                t_power.SetActionRoutine(on_power(op, t_power))
-
-                t_speed = TextCtrl(
-                    self.op_panel,
-                    wx.ID_ANY,
-                    "",
-                    limited=True,
-                    check="float",
-                    style=wx.TE_PROCESS_ENTER,
-                    nonzero=True,
-                )
-                t_speed.SetMinSize(dip_size(self, 30, -1))
-                t_speed.SetMaxSize(dip_size(self, 70, -1))
-                op_sizer.Add(t_speed, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-                if hasattr(op, "speed"):
-                    sval = op.speed if op.speed is not None else 0
-                    if self.use_mm_min:
-                        t_speed.SetValue(f"{sval * 60:.0f}")
-                        unit = "mm/min"
-                    else:
-                        t_speed.SetValue(f"{sval:.1f}")
-                        unit = "mm/s"
-                    t_speed.SetToolTip(
-                        info + "\n" + _("Speed ({unit})").format(unit=unit)
-                    )
-                else:
-                    t_speed.Enable(False)
-                t_speed.SetActionRoutine(on_speed(op, t_speed))
-
-                header = wxStaticText(
-                    self.op_panel, wx.ID_ANY, label=info, style=wx.ST_ELLIPSIZE_END
-                )
-                header.SetToolTip(
-                    info
-                    + "\n"
-                    + _("Click to select all contained elements on the scene.")
-                    + "\n"
-                    + _("Double click to open the property dialog for the operation")
-                )
-                header.SetMinSize(dip_size(self, 30, -1))
-                header.SetMaxSize(dip_size(self, 170, -1))
-                op_sizer.Add(header, 1, wx.ALIGN_CENTER_VERTICAL, 0)
-                if self.std_color_back is None:
-                    self.std_color_back = wx.Colour(header.GetBackgroundColour())
-                    self.std_color_fore = wx.Colour(header.GetForegroundColour())
-                self.op_ctrl_list.append((op, header))
-                header.Bind(wx.EVT_LEFT_DOWN, on_label_single(op))
-                header.Bind(wx.EVT_LEFT_DCLICK, on_label_double(op))
-
-        self.op_panel.SetupScrolling()
-        self.operation_sizer.Layout()
-        self.op_panel.Layout()
-        self.highlight_operations(source="fill_operations")
-        self.op_panel.Thaw()
-        self.op_panel.Refresh()
-        # print (f"Fill operations called: {len(self.op_panel.GetChildren())}")
-
-    def highlight_operations(self, source=None):
-        # print (f"Highlighting [{source}]")
-        active_ops = []
-        highlight_back = wx.SystemSettings().GetColour(wx.SYS_COLOUR_HIGHLIGHT)
-        highlight_fore = wx.SystemSettings().GetColour(wx.SYS_COLOUR_HIGHLIGHTTEXT)
-        highlight_back.ChangeLightness(32)
-
-        for elem in self.context.elements.elems(emphasized=True):
-            for op in self.context.elements.ops():
-                for node in op.children:
-                    if node.type == "reference":
-                        node = node.node
-                    if node is elem:
-                        if op not in active_ops:
-                            active_ops.append(op)
-                        break
-        # print(f"Active ops: {len(active_ops)}")
-        for op, ctrl in self.op_ctrl_list:
-            if op in active_ops:
-                ctrl.SetBackgroundColour(highlight_back)
-                ctrl.SetForegroundColour(highlight_fore)
-            else:
-                ctrl.SetBackgroundColour(self.std_color_back)
-                ctrl.SetForegroundColour(self.std_color_fore)
-            ctrl.Refresh()
+    # ------------------------------------------------------------------
+    # Pane / signal handling
+    # ------------------------------------------------------------------
 
     def pane_show(self, *args):
-        # print ("Showing")
         self.visible = True
         if "set_display" in self.pending_ops:
             self.set_display()
-        if "ask_for_refill" in self.pending_ops:
+        if "ask_for_refill" in self.pending_ops or not self.listed_ops:
             self.ask_for_refill()
             # Ask for refill will also highlight, so no need to check this
         elif "highlight_operations" in self.pending_ops:
@@ -736,7 +903,6 @@ class BasicOpPanel(wx.Panel):
         self.pending_ops = dict()
 
     def pane_hide(self, *args):
-        # print ("Hiding")
         self.visible = False
 
     @signal_listener("element_property_update")
@@ -759,7 +925,6 @@ class BasicOpPanel(wx.Panel):
                 if n.type.startswith("op "):
                     hadops = True
                     break
-        # print (f"Signal elem update called {args} / {kwargs} / {len(list(self.context.elements.ops()))}")
         if hadops:
             self.ask_for_refill()
 
@@ -770,9 +935,7 @@ class BasicOpPanel(wx.Panel):
     @signal_listener("add_operation")
     @signal_listener("warn_state_update")
     def signal_handler_rebuild(self, origin, *args, **kwargs):
-        # print (f"Signal rebuild called {args} / {kwargs} / {len(list(self.context.elements.ops()))}")
         if not self.visible:
-            # print ("Delay ask_for_refill")
             self.pending_ops["ask_for_refill"] = True
             return
 
@@ -798,10 +961,8 @@ class BasicOpPanel(wx.Panel):
         self.ask_for_refill()
 
     @signal_listener("emphasized")
-    @dispatch_to_main_thread
     def signal_handler_emphasized(self, origin, *args, **kwargs):
         if not self.IsShown():
-            # print ("Delay highlight_operations")
             self.pending_ops["highlight_operations"] = True
             return
         self.context.elements.set_start_time("BasicOpPanel")

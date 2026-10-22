@@ -26,12 +26,6 @@ DEFAULT_LEN = "5cm"
 
 
 class LaserToolPanel(wx.Panel):
-    """LaserToolPanel - User interface panel for laser cutting operations
-    **Technical Purpose:**
-    Provides user interface controls for lasertool functionality. Features label, button controls for user interaction. Integrates with status;position, driver;position for enhanced functionality.
-    **End-User Perspective:**
-    This panel provides controls for lasertool functionality. Key controls include "A" (label), "Use position" (button), "<empty>" (label)."""
-
     def __init__(self, *args, context=None, **kwds):
         # begin wxGlade: clsLasertools.__init__
         kwds["style"] = kwds.get("style", 0) | wx.TAB_TRAVERSAL
@@ -54,7 +48,6 @@ class LaserToolPanel(wx.Panel):
         # ------------------------ Circle with 3 points
 
         self.nb_circle = wx.Panel(self.nbook_lasertools, wx.ID_ANY)
-        self.nb_circle.Reparent(self.nbook_lasertools)
         self.nbook_lasertools.AddPage(self.nb_circle, _("Find center"))
 
         self.sizer_circle = wx.BoxSizer(wx.VERTICAL)
@@ -147,7 +140,6 @@ class LaserToolPanel(wx.Panel):
         # ------------------------ Rectangle with 2 points
 
         self.nb_rectangle = wx.Panel(self.nbook_lasertools, wx.ID_ANY)
-        self.nb_rectangle.Reparent(self.nbook_lasertools)
         self.nbook_lasertools.AddPage(self.nb_rectangle, _("Place frame"))
 
         self.sizer_rectangle = wx.BoxSizer(wx.VERTICAL)
@@ -217,7 +209,6 @@ class LaserToolPanel(wx.Panel):
         # ------------------------ Square with 3 points
 
         self.nb_square = wx.Panel(self.nbook_lasertools, wx.ID_ANY)
-        self.nb_square.Reparent(self.nbook_lasertools)
         self.nbook_lasertools.AddPage(self.nb_square, _("Place square"))
 
         self.sizer_square = wx.BoxSizer(wx.VERTICAL)
