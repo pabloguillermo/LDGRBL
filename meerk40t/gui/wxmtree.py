@@ -92,10 +92,7 @@ def register_panel_tree(window, context):
         | wx.aui.AUI_NB_BOTTOM,
     )
     context.themes.set_window_colors(notetab)
-    bg_std = context.themes.get("win_bg")
-    bg_active = context.themes.get("highlight")
-    notetab.GetArtProvider().SetColour(bg_std)
-    notetab.GetArtProvider().SetActiveColour(bg_active)
+    context.themes.style_aui_tabs(notetab)
 
     pane = (
         aui.AuiPaneInfo()

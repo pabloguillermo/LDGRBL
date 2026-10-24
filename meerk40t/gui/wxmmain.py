@@ -390,6 +390,10 @@ class MeerK40t(MWindow):
             aui.AUI_DOCKART_INACTIVE_CAPTION_TEXT_COLOUR, fg_col
         )
 
+        # Panes docked together make AuiManager create its own notebooks (with
+        # the unthemed platform tab art), we restyle them whenever we are idle
+        self.Bind(wx.EVT_IDLE, self._style_docked_notebooks)
+
         self.__set_panes()
         self.__set_commands()
 
@@ -3534,6 +3538,17 @@ class MeerK40t(MWindow):
         self._mgr.LoadPerspective(self.default_aui, update=True)
         self.context.aui_version = self.context.kernel.version
         self.on_config_panes()
+
+    def _style_docked_notebooks(self, event):
+        event.Skip()
+        for child in self.GetChildren():
+            if (
+                isinstance(child, wx.aui.AuiNotebook)
+                and not getattr(child, "_mk_tabs_styled", False)
+            ):
+                child._mk_tabs_styled = True
+                self.context.themes.style_aui_tabs(child)
+                child.Refresh()
 
     def on_panes_closed(self):
         for pane in self._mgr.GetAllPanes():

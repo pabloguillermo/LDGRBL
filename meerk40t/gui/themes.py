@@ -200,6 +200,30 @@ class Themes(Service):
         tp["arm_fg_focus"] = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW)
 
 
+    def create_aui_tab_art(self):
+        """
+        The platform default AuiNotebook tab art (native on GTK) ignores the
+        configured colours but still uses the theme foreground, which gives e.g.
+        white text on grey tabs. The simple art honours the colours and picks
+        a readable text colour for them.
+        """
+        art = wx.aui.AuiSimpleTabArt()
+        art.SetColour(self.get("win_bg"))
+        art.SetActiveColour(self.get("highlight"))
+        return art
+
+    def style_aui_tabs(self, notebook: wx.aui.AuiNotebook):
+        notebook.SetArtProvider(self.create_aui_tab_art())
+
+    def set_native_notebook_colors(self, notebook: wx.Notebook):
+        """
+        Colour the pages of a native wx.Notebook, but not the notebook itself:
+        native tabs ignore the background colour, so forcing a theme foreground
+        on the notebook gives e.g. white text on light grey tabs.
+        """
+        for idx in range(notebook.GetPageCount()):
+            self.set_window_colors(notebook.GetPage(idx))
+
     def set_window_colors(self, win:wx.Window):
         tp = self._theme_properties
         win.SetBackgroundColour(tp["win_bg"])

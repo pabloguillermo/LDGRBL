@@ -437,7 +437,6 @@ class TextPropertyPanel(ScrolledPanel):
         sizer_main.Add(sizer_anchor, 0, wx.EXPAND, 0)
 
         self.notebook = wx.Notebook(self, id=wx.ID_ANY)
-        self.context.themes.set_window_colors(self.notebook)
 
         page_main = wx.Panel(self.notebook, wx.ID_ANY)
         sizer_page_main = wx.BoxSizer(wx.VERTICAL)
@@ -503,6 +502,7 @@ class TextPropertyPanel(ScrolledPanel):
         self.notebook.AddPage(page_variables, _("Text-Variables"))
         self.notebook.AddPage(page_fonthistory, _("Font-History"))
         self.notebook.AddPage(page_extended, _("Position"))
+        self.context.themes.set_native_notebook_colors(self.notebook)
         sizer_main.Add(sizer_font, 1, wx.EXPAND, 0)
         sizer_main.Add(self.notebook, 1, wx.EXPAND, 0)
 

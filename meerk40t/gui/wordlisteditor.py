@@ -921,10 +921,7 @@ class WordlistEditor(MWindow):
             | wx.aui.AUI_NB_TAB_MOVE,
         )
         self.window_context.themes.set_window_colors(self.notebook_main)
-        bg_std = self.window_context.themes.get("win_bg")
-        bg_active = self.window_context.themes.get("highlight")
-        self.notebook_main.GetArtProvider().SetColour(bg_std)
-        self.notebook_main.GetArtProvider().SetActiveColour(bg_active)
+        self.window_context.themes.style_aui_tabs(self.notebook_main)
 
         self.sizer.Add(self.notebook_main, 1, wx.EXPAND, 0)
         self.notebook_main.AddPage(self.panel_editor, _("Editing"))

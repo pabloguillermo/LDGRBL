@@ -881,7 +881,6 @@ class SimulationPanel(wx.Panel, Job):
         )
 
         self.panel_optimize = wx.Notebook(self, wx.ID_ANY)
-        self.context.themes.set_window_colors(self.panel_optimize)
 
         self.subpanel_optimize.Reparent(self.panel_optimize)
         self.subpanel_operations.Reparent(self.panel_optimize)
@@ -889,6 +888,7 @@ class SimulationPanel(wx.Panel, Job):
         self.panel_optimize.AddPage(self.subpanel_optimize, _("Optimizations"))
         self.panel_optimize.AddPage(self.subpanel_operations, _("Operations"))
         self.panel_optimize.AddPage(self.subpanel_cutcode, _("Cutcode"))
+        self.context.themes.set_native_notebook_colors(self.panel_optimize)
         self.checkbox_optimize = wxCheckBox(self, wx.ID_ANY, _("Optimize"))
         self.checkbox_optimize.SetToolTip(_("Enable/Disable Optimize"))
         self.checkbox_optimize.SetValue(self.context.planner.do_optimization)

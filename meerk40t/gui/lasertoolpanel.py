@@ -41,7 +41,6 @@ class LaserToolPanel(wx.Panel):
         sizer_main = wx.BoxSizer(wx.VERTICAL)
 
         self.nbook_lasertools = wx.Notebook(self, wx.ID_ANY)
-        self.context.themes.set_window_colors(self.nbook_lasertools)
 
         sizer_main.Add(self.nbook_lasertools, 1, wx.EXPAND, 0)
 
@@ -311,6 +310,7 @@ class LaserToolPanel(wx.Panel):
         self.nb_rectangle.SetSizer(self.sizer_rectangle)
 
         self.SetSizer(sizer_main)
+        self.context.themes.set_native_notebook_colors(self.nbook_lasertools)
         sizer_main.Fit(self)
 
         self.Layout()
