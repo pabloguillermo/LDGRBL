@@ -15,7 +15,35 @@ list of commands.
 """
 
 
+def _clear_pending_jobs(kernel):
+    """
+    LDGRBL: every start begins without pending work. Empties the job queue of
+    every known device and drops any prepared cut plan.
+    """
+    try:
+        devices = list(kernel.services("device"))
+    except Exception:
+        devices = []
+    for device in devices:
+        spooler = getattr(device, "spooler", None)
+        if spooler is None:
+            continue
+        try:
+            spooler.clear_queue()
+        except Exception:
+            pass
+    try:
+        planner = kernel.planner
+        for plan in list(getattr(planner, "_plan", {}).values()):
+            plan.clear()
+    except Exception:
+        pass
+
+
 def plugin(kernel, lifecycle):
+    if lifecycle == "ready":
+        _clear_pending_jobs(kernel)
+        return
     if lifecycle == "register":
         _ = kernel.translation
 

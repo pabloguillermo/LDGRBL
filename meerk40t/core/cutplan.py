@@ -306,8 +306,25 @@ class CutPlan:
                         if node is op:
                             continue
                         if hasattr(node, "geometry") and perform_simplify:
-                            # We are still in scene reolution and not yet at device level
-                            node.geometry = node.geometry.simplify(tolerance=tolerance)
+                            # The tolerance is given in scene units, but node.geometry
+                            # is stored untransformed (node.matrix is applied later).
+                            # E.g. an SVG in mm has a matrix scaling ~2580x, so
+                            # without compensation a tolerance of 10 would be
+                            # 10 mm and collapse the drawing into big polygons.
+                            local_tolerance = tolerance
+                            matrix = getattr(node, "matrix", None)
+                            if matrix is not None:
+                                try:
+                                    scale = abs(
+                                        matrix.a * matrix.d - matrix.b * matrix.c
+                                    ) ** 0.5
+                                except (AttributeError, TypeError):
+                                    scale = 1.0
+                                if scale > 1e-12:
+                                    local_tolerance = tolerance / scale
+                            node.geometry = node.geometry.simplify(
+                                tolerance=local_tolerance
+                            )
                         if hasattr(node, "mktext") and hasattr(node, "_cache"):
                             newtext = self.context.elements.wordlist_translate(
                                 node.mktext, elemnode=node, increment=False

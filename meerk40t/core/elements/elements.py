@@ -4241,6 +4241,7 @@ class Elemental(Service):
                             opcount_now = self.count_op()
                             self.remove_invalid_references()
                             self.remove_empty_groups()
+                            self.apply_import_defaults()
                             for e in self.elems_nodes():
                                 if e not in _stored_elements:
                                     self.added_elements.append(e)
@@ -4273,6 +4274,24 @@ class Elemental(Service):
                             return False
 
         return False
+
+    # LDGRBL: defaults given to the operations whenever a file is imported.
+    IMPORT_DEFAULT_SPEED = 600.0  # mm/s
+    IMPORT_DEFAULT_POWER = 100.0  # 10% (power scale is 0..1000)
+
+    def apply_import_defaults(self):
+        """
+        Every imported file starts with the same speed and power on all
+        operations, independent of what the file (or a previous session) stored.
+        """
+        for op in self.ops():
+            if not str(getattr(op, "type", "")).startswith("op "):
+                continue
+            if not hasattr(op, "speed") or not hasattr(op, "power"):
+                continue
+            op.speed = self.IMPORT_DEFAULT_SPEED
+            op.power = self.IMPORT_DEFAULT_POWER
+            op.altered()
 
     def clear_loaded_information(self):
         self.added_elements.clear()

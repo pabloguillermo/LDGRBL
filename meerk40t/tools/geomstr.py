@@ -4847,7 +4847,10 @@ class Geomstr:
         """
 
         def process(S, P, a, b):
-            signed_dist = np.cross(S[P] - S[a], S[b] - S[a])
+            # Explicit 2D cross product (np.cross on 2D vectors is gone in numpy >= 2.3)
+            u = S[P] - S[a]
+            v = S[b] - S[a]
+            signed_dist = u[..., 0] * v[..., 1] - u[..., 1] * v[..., 0]
             K = [i for s, i in zip(signed_dist, P) if s > 0 and i != a and i != b]
 
             if len(K) == 0:
@@ -5475,7 +5478,10 @@ class Geomstr:
             if line_length == 0:
                 return np.linalg.norm(points - start, axis=-1)
             if line.size == 2:
-                return abs(np.cross(line, start - points)) / line_length  # 2D case
+                # 2D case. np.cross() with 2D vectors was removed in numpy >= 2.3,
+                # so compute the z-component of the cross product explicitly.
+                diff = start - points
+                return abs(line[0] * diff[..., 1] - line[1] * diff[..., 0]) / line_length
             return (
                 abs(np.linalg.norm(np.cross(line, start - points), axis=-1))
                 / line_length
@@ -5488,7 +5494,10 @@ class Geomstr:
             while stack:
                 start_index, last_index = stack.pop()
 
-                local_points = points[indices][start_index + 1 : last_index]
+                # Index the original array: start/last are original indices and
+                # sub-ranges are disjoint, so nothing in this range is dropped yet.
+                # (Indexing points[indices] shifts positions once points are removed.)
+                local_points = points[start_index + 1 : last_index]
                 if len(local_points) == 0:
                     continue
                 distances = _compute_distances(
