@@ -236,6 +236,49 @@ class GRBLDriver(Parameters):
         self.wait(time_in_ms)
         self.laser_off()
 
+    def _spindle_value(self, power):
+        """
+        Convert the internal power (0-1000, where 1000 is 100%) to the S value
+        the firmware expects. GRBL interprets S relative to its maximum spindle
+        speed ($30), so we scale to that to make 100% mean full power on every
+        machine, whatever $30 is configured to.
+
+        @param power: power in the 0-1000 range
+        @return: S value for the firmware
+        """
+        try:
+            smax = float(self.service.hardware_config.get(30, 1000))
+        except (TypeError, ValueError, AttributeError):
+            smax = 1000.0
+        if smax <= 0:
+            smax = 1000.0
+        return power * smax / 1000.0
+
+    def _feed_value(self, speed):
+        """
+        Convert a speed (mm/s) to the F word, limited to the firmware maximum
+        rate ($110/$111, mm/min). In M4 (laser dynamic power) GRBL scales the
+        power by actual speed / programmed speed. If the programmed speed is
+        above what the machine can reach, the power is silently reduced.
+
+        @param speed: speed in mm/s
+        @return: F value for the firmware
+        """
+        feed = self.feed_convert(speed)
+        if self.units != 21:
+            return feed
+        limits = []
+        for key in (110, 111):
+            try:
+                value = float(self.service.hardware_config.get(key))
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                limits.append(value)
+        if limits and feed > min(limits):
+            feed = min(limits)
+        return feed
+
     def laser_off(self, power=0, *values):
         """
         Turn laser off in place.
@@ -245,7 +288,7 @@ class GRBLDriver(Parameters):
         @return:
         """
         if power is not None:
-            spower = f" S{power:.1f}"
+            spower = f" S{self._spindle_value(power):.1f}"
             self.power = power
             self.power_dirty = False
             self(f"G1 {spower}{self.line_end}")
@@ -263,7 +306,7 @@ class GRBLDriver(Parameters):
         spower = ""
         sspeed = ""
         if power is not None:
-            spower = f" S{power:.1f}"
+            spower = f" S{self._spindle_value(power):.1f}"
             # We already established power, so no need for power_dirty
             self.power = power
             self.power_dirty = False
@@ -866,10 +909,12 @@ class GRBLDriver(Parameters):
 
         if self.power_dirty:
             if self.power is not None:
-                line.append(f"S{self.power * self.on_value:.1f}")
+                line.append(
+                    f"S{self._spindle_value(self.power * self.on_value):.1f}"
+                )
             self.power_dirty = False
         if self.speed_dirty:
-            line.append(f"F{self.feed_convert(self.speed):.1f}")
+            line.append(f"F{self._feed_value(self.speed):.1f}")
             self.speed_dirty = False
         self(" ".join(line) + self.line_end)
         new_current = self.service.current
