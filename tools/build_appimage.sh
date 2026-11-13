@@ -54,7 +54,7 @@ done
 
 echo "==> Application sources"
 rsync -a --exclude='__pycache__' --exclude='*.pyc' "$ROOT/meerk40t" "$APPDIR/usr/lib/ldgrbl/"
-cp "$ROOT/meerk40t.py" "$APPDIR/usr/lib/ldgrbl/"
+cp "$ROOT/ldgrbl.py" "$APPDIR/usr/lib/ldgrbl/"
 [ -d "$ROOT/locale" ] && rsync -a "$ROOT/locale" "$APPDIR/usr/lib/ldgrbl/"
 
 echo "==> Launcher, desktop entry, icon"
@@ -67,7 +67,7 @@ export PYTHONPATH="\$HERE/usr/lib/ldgrbl:\$HERE/usr/lib/python3/dist-packages"
 export PYTHONNOUSERSITE=1
 export PYTHONDONTWRITEBYTECODE=1
 export LD_LIBRARY_PATH="\$HERE/usr/lib/wx\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
-exec "\$HERE/usr/bin/python$PYVER" "\$HERE/usr/lib/ldgrbl/meerk40t.py" "\$@"
+exec "\$HERE/usr/bin/python$PYVER" "\$HERE/usr/lib/ldgrbl/ldgrbl.py" "\$@"
 EOF
 chmod +x "$APPDIR/AppRun"
 

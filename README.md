@@ -38,19 +38,18 @@ sudo apt install python3-venv python3-pip libgtk-3-dev libpython3-dev
 git clone https://github.com/pabloguillermo/LDGRBL.git
 cd LDGRBL
 
-# 2. Ambiente virtual e dependências
-python3 -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-
-# 3. Executar
-python meerk40t.py
+# 2. Executar (na primeira vez cria o venv e instala as dependências sozinho)
+./install-run.sh
 ```
+
+No VS Code, depois de rodar o script uma vez, basta abrir a pasta e apertar F5: o interpretador `venv/` e a configuração de depuração já vêm no repositório.
+
+Manualmente (Windows, por exemplo): `python -m venv venv`, ative o venv, `pip install -r requirements.txt` e `python ldgrbl.py`.
 
 Opcionais (mais velocidade e recursos): veja `requirements-optional-linux.txt`, `requirements-optional-win.txt` e `linux.txt`.
 
 > Dica: para testar sem mexer nas suas configurações reais, rode com um `HOME` temporário:
-> `HOME=$(mktemp -d) python meerk40t.py`
+> `HOME=$(mktemp -d) python ldgrbl.py`
 
 ### Modificando e contribuindo
 
@@ -69,9 +68,7 @@ O build usa o PyInstaller em modo *onedir*, depois empacota com o `appimagetool`
 
 ```bash
 pip install pyinstaller
-mv meerk40t.py mk40t.py     # o PyInstaller se confunde com o pacote meerk40t
 pyinstaller .github/workflows/linux/meerk40t.spec   # ou seu próprio .spec
-mv mk40t.py meerk40t.py
 # monte um AppDir (AppRun, .desktop, ícone, usr/bin/LDGRBL) e rode:
 ARCH=x86_64 appimagetool MeuAppDir LDGRBL.AppImage
 ```
@@ -118,13 +115,12 @@ sudo apt install python3-venv python3-pip libgtk-3-dev libpython3-dev   # Debian
 
 git clone https://github.com/pabloguillermo/LDGRBL.git
 cd LDGRBL
-python3 -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-python meerk40t.py
+./install-run.sh      # first run creates the venv and installs dependencies
 ```
 
-Tip: to avoid touching your real settings, run with a throwaway home: `HOME=$(mktemp -d) python meerk40t.py`.
+In VS Code, after running the script once, just open the folder and press F5 (interpreter and debug config are in the repo). Manual setup (e.g. Windows): `python -m venv venv`, activate it, `pip install -r requirements.txt`, `python ldgrbl.py`.
+
+Tip: to avoid touching your real settings, run with a throwaway home: `HOME=$(mktemp -d) python ldgrbl.py`.
 
 ### Hacking and contributing
 

@@ -49,7 +49,8 @@ _ = wx.GetTranslation
 
 def register_panel_ribbon(window, context):
     iconsize = get_default_icon_size(context)
-    minh = 3 * iconsize + 25
+    # Botões da faixa ficam em uma única linha: ícone + rótulo + abas cabem em ~2 ícones
+    minh = int(2 * iconsize + 25)
     pane_ribbon = (
         aui.AuiPaneInfo()
         .Name("ribbon")

@@ -3,7 +3,7 @@
 block_cipher = None
 
 
-a = Analysis(['../../../mk40t.py'],
+a = Analysis(['../../../ldgrbl.py'],
              pathex=['../../../build/meerk40t-import'],
              binaries = [],
              datas=[],

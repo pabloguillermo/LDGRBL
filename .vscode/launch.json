@@ -6,10 +6,10 @@
     "configurations": [
 
         {
-            "name": "Python Debugger: Run MeerK40t",
+            "name": "Python Debugger: Run LDGRBL",
             "type": "debugpy",
             "request": "launch",
-            "program": "meerk40t.py",
+            "program": "ldgrbl.py",
             "console": "integratedTerminal"
         }
     ]

@@ -10,7 +10,7 @@ FileTypePlist = dict(
     ]
 )
 
-APP = ["meerk40t.py"]
+APP = ["ldgrbl.py"]
 DATA_FILES = ["locale"]
 OPTIONS = {
     "iconfile": "meerk40t.icns",

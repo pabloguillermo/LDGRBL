@@ -471,7 +471,7 @@ def main():
     # Expand 'all' to all supported locales
     locales: list[str] = []
     for loc in args.locales:
-        loc = loc.lower()
+        loc = {k.lower(): k for k in LOCALE_LONG_NAMES}.get(loc.lower(), loc.lower())
         if loc == "all":
             locales.extend(list(LOCALE_LONG_NAMES.keys()))
         elif loc in LOCALE_LONG_NAMES:

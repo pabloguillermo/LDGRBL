@@ -24,9 +24,7 @@ jobs:
 
     - name: Build Meerk40t
       run: |
-        mv meerk40t.py mk40t.py
         pyinstaller --windowed --onefile --name meerk40t .github/workflows/linux/meerk40t.spec
-        mv mk40t.py meerk40t.py
         mv dist/MeerK40t dist/MeerK40t-Linux
 
     - name: Upload Release Assets
